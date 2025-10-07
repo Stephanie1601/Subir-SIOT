@@ -45,51 +45,66 @@ small.help { color: #666; }
 # ---------- SIMPLE AUTH ----------
 AUTH_USERS = json.loads(os.environ.get("AUTH_USERS_JSON", os.getenv("AUTH_USERS_JSON", '{"admin":"admin"}')))
 
+from pathlib import Path
+import base64
+
 def login_view():
-    # ---------- CSS para centrar todo el bloque ----------
+    # ---------- CSS para centrar y limitar ancho ----------
     st.markdown("""
         <style>
-        .login-container {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 85vh; /* centra verticalmente */
-            text-align: center;
+        .login-container{
+            display:flex; flex-direction:column; align-items:center; justify-content:center;
+            height:85vh; text-align:center;
         }
-        .login-box {
-            background: #ffffff;
-            padding: 40px 50px;
-            border-radius: 18px;
-            box-shadow: 0 4px 16px rgba(0,0,0,0.08);
-            width: 100%;
-            max-width: 420px; /* hace que no se vea tan ancho */
+        .login-box{
+            background:#fff; padding:40px 50px; border-radius:18px;
+            box-shadow:0 4px 16px rgba(0,0,0,.08);
+            width:100%; max-width:420px;
         }
-        .login-logo img {
-            width: 160px;
-            margin-bottom: 16px;
-        }
+        .login-logo{ margin-bottom:10px; }
         </style>
     """, unsafe_allow_html=True)
 
-    # ---------- Contenedor visual centrado ----------
-    st.markdown("<div class='login-container'>", unsafe_allow_html=True)
-    st.markdown("<div class='login-box'>", unsafe_allow_html=True)
+    st.markdown("<div class='login-container'><div class='login-box'>", unsafe_allow_html=True)
 
-    # ---------- Logo y títulos ----------
-    st.markdown("<div class='login-logo'><img src='Logo EOMMT.png'></div>", unsafe_allow_html=True)
+    # ---------- Logo + título superior ----------
+    # intentamos cargar el logo con st.image (forma recomendada)
+    logo_candidates = [
+        Path(__file__).parent / "Logo EOMMT.png",
+        Path(__file__).parent / "logo_eommt.png",
+        Path("Logo EOMMT.png"),
+        Path("logo_eommt.png"),
+    ]
+    logo_path = next((str(p) for p in logo_candidates if p.exists()), None)
+
+    st.markdown("<div class='login-logo'>", unsafe_allow_html=True)
+    if logo_path:
+        # centramos con columnas para asegurar alineación
+        c1, c2, c3 = st.columns([1,2,1])
+        with c2:
+            st.image(logo_path, width=160)
+    else:
+        # fallback: intenta inline base64 si el archivo no se resuelve por ruta
+        try:
+            with open("Logo EOMMT.png", "rb") as f:
+                b64 = base64.b64encode(f.read()).decode("utf-8")
+            st.markdown(f"<img src='data:image/png;base64,{b64}' width='160'/>", unsafe_allow_html=True)
+        except Exception:
+            st.info("No se encontró el logo: asegúrate del nombre exacto o renómbralo a 'logo_eommt.png'.")
+
+    st.markdown("</div>", unsafe_allow_html=True)
+
+    # Título institucional + subtítulo de login
     st.markdown("### 🚇 Instrucción Operacional de Trabajos")
     st.markdown("## 🔐 Ingreso al sistema")
     st.write("Por favor ingresa tus credenciales para continuar:")
 
-    # ---------- Campos de entrada ----------
-    user = st.text_input("Usuario", key="login_user", placeholder="Escribe tu usuario")
-    pwd = st.text_input("Contraseña", key="login_pwd", type="password", placeholder="Escribe tu contraseña")
+    # ---------- Campos (vertical, con keys únicas) ----------
+    user = st.text_input("Usuario", key="login_user", placeholder="Escribe tu usuario", label_visibility="visible")
+    pwd  = st.text_input("Contraseña", key="login_pwd", type="password", placeholder="Escribe tu contraseña", label_visibility="visible")
 
-    # ---------- Botón ----------
     ok = st.button("Ingresar", key="btn_login", use_container_width=True)
 
-    # ---------- Validación ----------
     if ok:
         if user in AUTH_USERS and AUTH_USERS.get(user) == pwd:
             st.session_state['auth_user'] = user
@@ -354,6 +369,7 @@ if require_auth():
             )
 else:
     st.stop()
+
 
 
 
