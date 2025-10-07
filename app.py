@@ -1,4 +1,3 @@
-# app.py
 import os
 import io
 import time
@@ -31,13 +30,6 @@ div.stButton > button {
     box-shadow: 0 3px 12px rgba(0,0,0,.06);
     border: 1px solid #eee;
 }
-.logo-img {
-    max-width: 220px;
-    border-radius: 12px;
-    margin-bottom: .5rem;
-    box-shadow: 0 2px 8px rgba(0,0,0,.1);
-    border: 1px solid #eee;
-}
 .section {
     padding: 16px;
     border-radius: 16px;
@@ -50,8 +42,7 @@ small.help { color: #666; }
 </style>
 ''', unsafe_allow_html=True)
 
-# ---------- SIMPLE AUTH (demo) ----------
-# Recomendado: pasar usuarios por variable de entorno AUTH_USERS_JSON='{"admin":"12345","stephanie":"clave"}'
+# ---------- SIMPLE AUTH ----------
 AUTH_USERS = json.loads(os.environ.get("AUTH_USERS_JSON", os.getenv("AUTH_USERS_JSON", '{"admin":"admin"}')))
 
 def login_view():
@@ -76,19 +67,14 @@ def require_auth():
 
 # ---------- HELPERS ----------
 def read_excel_table(uploaded_bytes: bytes, table_name: str = "SIOT") -> pd.DataFrame:
-    """
-    Busca una tabla estructurada llamada 'SIOT' en el archivo; si no la encuentra,
-    usa la primera hoja como respaldo.
-    """
     bio = io.BytesIO(uploaded_bytes)
     wb = load_workbook(bio, data_only=True, read_only=True)
 
-    # 1) Intentar encontrar tabla estructurada "SIOT"
     for ws in wb.worksheets:
         tables = getattr(ws, "_tables", {}) or {}
         for t in tables.values():
             if t.name and t.name.lower() == table_name.lower():
-                ref = t.ref  # p.ej. "A1:K300"
+                ref = t.ref
                 start, end = ref.split(":")
                 start_col = ''.join(filter(str.isalpha, start))
                 start_row = int(''.join(filter(str.isdigit, start)))
@@ -111,7 +97,6 @@ def read_excel_table(uploaded_bytes: bytes, table_name: str = "SIOT") -> pd.Data
                 df = pd.DataFrame(body, columns=header)
                 return df
 
-    # 2) Respaldo: primera hoja
     bio.seek(0)
     xls = pd.ExcelFile(bio, engine="openpyxl")
     first = xls.sheet_names[0]
@@ -119,7 +104,6 @@ def read_excel_table(uploaded_bytes: bytes, table_name: str = "SIOT") -> pd.Data
     return df
 
 def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """Limpieza básica: nombres de columnas, elimina filas/columnas vacías, trim a strings."""
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
     df = df.dropna(axis=1, how="all")
@@ -130,11 +114,6 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def build_fields_attributes(row: dict, mapping: dict) -> list:
-    """
-    Convierte row (dict de la fila Excel) en fields_attributes que Pipefy espera:
-    [{"field_id": "...", "field_value": ...}, ...]
-    Solo incluye columnas mapeadas y con valor no vacío.
-    """
     attrs = []
     for col, field_id in mapping.items():
         if not field_id:
@@ -150,10 +129,6 @@ def build_fields_attributes(row: dict, mapping: dict) -> list:
     return attrs
 
 def pipefy_create_card(pipe_id: int, fields_attrs: list, token: str):
-    """
-    Llama a la mutación createCard de Pipefy (GraphQL).
-    Devuelve (ok, card_id, errors, raw_response_text)
-    """
     url = "https://api.pipefy.com/graphql"
     headers = {
         "Authorization": f"Bearer {token}",
@@ -198,24 +173,27 @@ def pipefy_create_card(pipe_id: int, fields_attrs: list, token: str):
 
 # ---------- APP ----------
 if require_auth():
-
     with st.sidebar:
-        st.header("🎨 Branding")
-        logo_file = st.file_uploader("Logo (PNG/JPG)", type=["png", "jpg", "jpeg"], key="logo")
-        if logo_file is not None:
-            st.image(logo_file, caption="Logo cargado", use_container_width=True)
-
-        st.markdown("---")
         st.subheader("🔧 Configuración Pipefy")
         pipe_id = st.text_input("Pipe ID", placeholder="Ej. 123456789")
         token = st.text_input("API Token", type="password", placeholder="Token secreto de Pipefy")
         dry_run = st.toggle("Simular (no crea tarjetas)", value=True,
                             help="Haz pruebas antes de subir definitivamente.")
 
+    # ---------- LOGO PRINCIPAL ----------
+    st.markdown(
+        """
+        <div style="text-align:center; margin-bottom: 10px;">
+            <img src="Logo EOMMT.png" width="260">
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
     st.title("📤 SIOT → Pipefy")
     st.caption("Sube tu archivo Excel, detectamos la tabla **SIOT**, y creamos una tarjeta por cada fila con datos.")
 
-    # Subir Excel
+    # ---------- CARGA DE ARCHIVO ----------
     up = st.file_uploader("Subir Excel (.xlsx)", type=["xlsx"], accept_multiple_files=False)
 
     if up is not None:
@@ -226,15 +204,11 @@ if require_auth():
             st.stop()
 
         df = clean_dataframe(df)
-
         st.subheader("👀 Vista previa")
         st.dataframe(df.head(50), use_container_width=True)
 
-        # ---------- Mapeo columnas → field_id ----------
         st.subheader("🧭 Mapeo de columnas → campos de Pipefy")
 
-        # Plantilla por defecto (puedes editarla en el TextArea debajo)
-        # Ejemplo: {"Nombre": "name", "Correo": "email", "Fecha": "date"}
         default_mapping_literal = json.dumps(
             {str(c): "" for c in df.columns},
             ensure_ascii=False,
@@ -249,18 +223,15 @@ if require_auth():
 
         try:
             mapping = json.loads(mapping_json)
-            # Completar columnas no mapeadas si se agregaron nuevas
             for c in df.columns:
                 mapping.setdefault(str(c), "")
         except Exception as e:
             st.error(f"JSON inválido en el mapeo: {e}")
             st.stop()
 
-        # Filtrar filas con datos (no completamente vacías)
         df_upload = df.dropna(how="all")
         st.markdown(f"**Filas detectadas con datos:** {len(df_upload)}")
 
-        # Vista acotada opcional
         with st.expander("🔎 Filtro opcional"):
             cols = st.multiselect(
                 "Columnas a mostrar en el resumen",
@@ -269,7 +240,6 @@ if require_auth():
             )
             st.dataframe(df_upload[cols].head(100), use_container_width=True)
 
-        # KPIs
         c1, c2, c3 = st.columns(3)
         with c1:
             st.markdown(f"<div class='kpi'><b>Columnas</b><br>{len(df_upload.columns)}</div>", unsafe_allow_html=True)
@@ -280,7 +250,6 @@ if require_auth():
 
         st.markdown("---")
 
-        # Botón de subida
         btn = st.button(
             "🚀 Subir a Pipefy",
             type="primary",
@@ -325,9 +294,9 @@ if require_auth():
                     else:
                         fail_count += 1
                         logs.append({"estado": "error", "fila": i, "detalle": errors or raw})
-                        time.sleep(0.4)  # pequeño backoff
+                        time.sleep(0.4)
 
-                time.sleep(0.15)  # ritmo suave para evitar límites
+                time.sleep(0.15)
                 progress.progress(i/total, text=f"Procesadas {i} / {total}")
 
             st.success(f"Proceso terminado. Éxitos: {ok_count} • Fallos: {fail_count} • Omitidas/Simuladas: {skipped}")
