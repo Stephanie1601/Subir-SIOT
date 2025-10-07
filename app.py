@@ -46,16 +46,50 @@ small.help { color: #666; }
 AUTH_USERS = json.loads(os.environ.get("AUTH_USERS_JSON", os.getenv("AUTH_USERS_JSON", '{"admin":"admin"}')))
 
 def login_view():
+    # ---------- CSS para centrar todo el bloque ----------
+    st.markdown("""
+        <style>
+        .login-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 85vh; /* centra verticalmente */
+            text-align: center;
+        }
+        .login-box {
+            background: #ffffff;
+            padding: 40px 50px;
+            border-radius: 18px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.08);
+            width: 100%;
+            max-width: 420px; /* hace que no se vea tan ancho */
+        }
+        .login-logo img {
+            width: 160px;
+            margin-bottom: 16px;
+        }
+        </style>
+    """, unsafe_allow_html=True)
+
+    # ---------- Contenedor visual centrado ----------
+    st.markdown("<div class='login-container'>", unsafe_allow_html=True)
+    st.markdown("<div class='login-box'>", unsafe_allow_html=True)
+
+    # ---------- Logo y títulos ----------
+    st.markdown("<div class='login-logo'><img src='Logo EOMMT.png'></div>", unsafe_allow_html=True)
+    st.markdown("### 🚇 Instrucción Operacional de Trabajos")
     st.markdown("## 🔐 Ingreso al sistema")
     st.write("Por favor ingresa tus credenciales para continuar:")
 
-    # Campos de entrada uno debajo del otro (vertical)
-    user = st.text_input("Usuario", placeholder="Escribe tu usuario")
-    pwd = st.text_input("Contraseña", type="password", placeholder="Escribe tu contraseña")
+    # ---------- Campos de entrada ----------
+    user = st.text_input("Usuario", key="login_user", placeholder="Escribe tu usuario")
+    pwd = st.text_input("Contraseña", key="login_pwd", type="password", placeholder="Escribe tu contraseña")
 
-    # Botón de ingreso
-    ok = st.button("Ingresar", use_container_width=True)
+    # ---------- Botón ----------
+    ok = st.button("Ingresar", key="btn_login", use_container_width=True)
 
+    # ---------- Validación ----------
     if ok:
         if user in AUTH_USERS and AUTH_USERS.get(user) == pwd:
             st.session_state['auth_user'] = user
@@ -64,7 +98,7 @@ def login_view():
         else:
             st.error("❌ Usuario o contraseña incorrectos.")
 
-    # Si no hay sesión iniciada, devolvemos False para que no pase a la app
+    st.markdown("</div></div>", unsafe_allow_html=True)
     return 'auth_user' in st.session_state
 
 def require_auth():
@@ -320,5 +354,6 @@ if require_auth():
             )
 else:
     st.stop()
+
 
 
