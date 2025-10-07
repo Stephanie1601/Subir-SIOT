@@ -14,7 +14,11 @@ st.set_page_config(page_title="Carga SIOT → Pipefy", page_icon="📤", layout=
 # ---------- THEME / CSS ----------
 st.markdown('''
 <style>
-.block-container {max-width: 1200px;}
+.block-container {
+    max-width: 1200px;
+    padding-top: 0rem !important;   /* <- elimina el espacio en blanco de arriba */
+    margin-top: 0 !important;
+}
 div.stButton > button {
     border-radius: 12px;
     padding: 0.6rem 1rem;
@@ -51,20 +55,24 @@ import base64
 def login_view():
     # ---------- CSS para centrar y limitar ancho ----------
     st.markdown("""
-        <style>
-        .login-container{
-            display:flex; flex-direction:column; align-items:center; justify-content:center;
-            height:85vh; text-align:center;
-        }
-        .login-box{
-            background:#fff; padding:40px 50px; border-radius:18px;
-            box-shadow:0 4px 16px rgba(0,0,0,.08);
-            width:100%; max-width:420px;
-        }
-        .login-logo{ margin-bottom:10px; }
-        </style>
-    """, unsafe_allow_html=True)
-
+    <style>
+    /* Centrado perfecto y sin espacio superior fantasma */
+    .login-container{
+        display:flex; flex-direction:column;
+        align-items:center; justify-content:center;
+        min-height:100vh;           /* <- en lugar de height:85vh */
+        text-align:center;
+        margin:0; padding:0;
+    }
+    .login-box{
+        background:#fff; padding:40px 50px; border-radius:18px;
+        box-shadow:0 4px 16px rgba(0,0,0,.08);
+        width:100%; max-width:420px;
+    }
+    .login-logo{ margin-bottom:10px; }
+    </style>
+""", unsafe_allow_html=True)
+    
     st.markdown("<div class='login-container'><div class='login-box'>", unsafe_allow_html=True)
 
     # ---------- Logo + título superior ----------
@@ -369,6 +377,7 @@ if require_auth():
             )
 else:
     st.stop()
+
 
 
 
