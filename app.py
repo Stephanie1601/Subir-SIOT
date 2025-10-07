@@ -46,23 +46,38 @@ small.help { color: #666; }
 AUTH_USERS = json.loads(os.environ.get("AUTH_USERS_JSON", os.getenv("AUTH_USERS_JSON", '{"admin":"admin"}')))
 
 def login_view():
-    with st.sidebar:
-        st.header("🔐 Acceso")
-        user = st.text_input("Usuario")
-        pwd = st.text_input("Contraseña", type="password")
-        ok = st.button("Ingresar", use_container_width=True)
+    st.markdown("## 🔐 Ingreso al sistema")
+    st.write("Por favor ingresa tus credenciales para continuar:")
+
+    # Campos de entrada visibles directamente en la página principal
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        user = st.text_input("Usuario", placeholder="Escribe tu usuario")
+    with col2:
+        pwd = st.text_input("Contraseña", type="password", placeholder="Escribe tu contraseña")
+
+    # Botón de ingreso
+    ok = st.button("Ingresar", use_container_width=True)
+
     if ok:
         if user in AUTH_USERS and AUTH_USERS.get(user) == pwd:
             st.session_state['auth_user'] = user
-            st.success("Acceso concedido.")
+            st.success("✅ Acceso concedido.")
             st.rerun()
         else:
-            st.error("Usuario o contraseña incorrectos.")
+            st.error("❌ Usuario o contraseña incorrectos.")
+
+    # Si no hay sesión iniciada, devolvemos False para que no pase a la app
     return 'auth_user' in st.session_state
 
 def require_auth():
-    if 'auth_user' not in st.session_state:
-        return login_view()
+    # Si ya hay sesión, permitir continuar
+    if 'auth_user' in st.session_state:
+        return True
+    # Si no, mostrar el login en la página principal y cortar el flujo
+    ok = login_view()
+    if not ok:
+        st.stop()
     return True
 
 # ---------- HELPERS ----------
@@ -308,3 +323,4 @@ if require_auth():
             )
 else:
     st.stop()
+
