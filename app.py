@@ -49,12 +49,9 @@ def login_view():
     st.markdown("## 🔐 Ingreso al sistema")
     st.write("Por favor ingresa tus credenciales para continuar:")
 
-    # Campos de entrada visibles directamente en la página principal
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        user = st.text_input("Usuario", placeholder="Escribe tu usuario")
-    with col2:
-        pwd = st.text_input("Contraseña", type="password", placeholder="Escribe tu contraseña")
+    # Campos de entrada uno debajo del otro (vertical)
+    user = st.text_input("Usuario", placeholder="Escribe tu usuario")
+    pwd = st.text_input("Contraseña", type="password", placeholder="Escribe tu contraseña")
 
     # Botón de ingreso
     ok = st.button("Ingresar", use_container_width=True)
@@ -323,4 +320,5 @@ if require_auth():
             )
 else:
     st.stop()
+
 
