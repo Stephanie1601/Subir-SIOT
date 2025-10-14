@@ -16,13 +16,17 @@ from openpyxl.utils import column_index_from_string
 st.set_page_config(page_title="Carga SIOT → Pipefy", page_icon="📤", layout="wide")
 
 # ---------- THEME / CSS ----------
-# Subo el padding-top para empujar TODO hacia abajo y evitar que la barra superior lo tape.
 st.markdown('''
 <style>
+/* Fuente general Arial para toda la app */
+html, body, [class*="css"] {
+    font-family: 'Arial', sans-serif !important;
+}
+
 /* Contenedor principal más abajo */
 .block-container {
     max-width: 1200px;
-    padding-top: 3.75rem !important;   /* << antes estaba 0; ahora ~60px */
+    padding-top: 4.2rem !important;   /* más espacio arriba para que se vea el logo */
     margin-top: 0 !important;
 }
 
@@ -31,6 +35,7 @@ div.stButton > button {
     border-radius: 12px;
     padding: 0.6rem 1rem;
     font-weight: 600;
+    font-family: 'Arial', sans-serif !important;
 }
 
 /* Sidebar */
@@ -56,19 +61,30 @@ div.stButton > button {
     box-shadow: 0 3px 16px rgba(0,0,0,.05);
 }
 
-/* Tipografías por defecto */
-h1, h2, h3 { font-weight: 1000; }
+/* Tipografía por defecto */
+h1, h2, h3 { 
+    font-family: 'Arial', sans-serif !important;
+    font-weight: 800;
+}
+
+/* Ajustes finos de encabezados del login */
+.login-title h2 { 
+    font-size: 2.6rem;        /* más grande para destacar */
+    line-height: 1.2; 
+    margin: .75rem 0 .25rem 0; 
+    color: #FF9016;           /* naranja EOMMT */
+}
+.login-subtitle h3 { 
+    font-size: 1.6rem; 
+    line-height: 1.2; 
+    margin: .5rem 0 .75rem 0; 
+    color: #444444;
+}
+
+/* Espaciador superior */
+.header-spacer { height: 15px; }
+
 small.help { color: #666; }
-
-/* Ajustes finos de los encabezados del login:
-   - H2 (Instrucción) más grande
-   - H3 (Ingreso) un poco más pequeño
-*/
-.login-title h2 { font-size: 2.0rem; line-height: 1.2; margin: .75rem 0 .25rem 0; }
-.login-subtitle h3 { font-size: 1.6rem; line-height: 1.2; margin: .5rem 0 .75rem 0; }
-
-/* Un pequeño espacio extra antes del logo en principal */
-.header-spacer { height: 10px; }
 </style>
 ''', unsafe_allow_html=True)
 
@@ -98,9 +114,7 @@ def _find_logo_bytes() -> bytes | None:
     return None
 
 def render_logo_center(width_px: int = 220):
-    """
-    Renderiza el logo siempre visible (lo incrusta como data URL Base64).
-    """
+    """Renderiza el logo siempre visible (lo incrusta como data URL Base64)."""
     img_bytes = _find_logo_bytes()
     if not img_bytes:
         st.info("No se encontró el logo de EOMMT en el servidor.")
@@ -133,14 +147,12 @@ def render_logo_sidebar(width_px: int = 160):
 def login_view():
     left, center, right = st.columns([1, 1, 1])
     with center:
-        # un pequeño spacer extra por si la barra superior es alta
         st.markdown('<div class="header-spacer"></div>', unsafe_allow_html=True)
-
         render_logo_center(width_px=200)
 
-        # Hacemos "Instrucción..." más grande que "Ingreso..."
-        st.markdown('<div class="login-title"🚇 Instrucción Operacional de Trabajos</div>', unsafe_allow_html=True)
-        st.markdown('<div class="login-subtitle" Ingreso al sistema</div>', unsafe_allow_html=True)
+        # Títulos jerarquizados
+        st.markdown('<div class="login-title">## 🚇 Instrucción Operacional de Trabajos</div>', unsafe_allow_html=True)
+        st.markdown('<div class="login-subtitle">### 🔐 Ingreso al sistema</div>', unsafe_allow_html=True)
 
         st.write("Por favor ingresa tus credenciales para continuar:")
 
@@ -155,7 +167,6 @@ def login_view():
                 st.rerun()
             else:
                 st.error("❌ Usuario o contraseña incorrectos.")
-
     return 'auth_user' in st.session_state
 
 def require_auth():
@@ -168,19 +179,14 @@ def require_auth():
 
 # ---------- HELPERS ----------
 def read_excel_table(uploaded_bytes: bytes, table_name: str = "SIOT") -> pd.DataFrame:
-    """
-    Busca una tabla estructurada llamada 'SIOT' en el archivo; si no la encuentra,
-    usa la primera hoja como respaldo.
-    """
     bio = io.BytesIO(uploaded_bytes)
     wb = load_workbook(bio, data_only=True, read_only=True)
 
-    # 1) Intentar encontrar tabla estructurada "SIOT"
     for ws in wb.worksheets:
         tables = getattr(ws, "_tables", {}) or {}
         for t in tables.values():
             if t.name and t.name.lower() == table_name.lower():
-                ref = t.ref  # p.ej. "A1:K300"
+                ref = t.ref
                 start, end = ref.split(":")
                 start_col = ''.join(filter(str.isalpha, start))
                 start_row = int(''.join(filter(str.isdigit, start)))
@@ -203,7 +209,6 @@ def read_excel_table(uploaded_bytes: bytes, table_name: str = "SIOT") -> pd.Data
                 df = pd.DataFrame(body, columns=header)
                 return df
 
-    # 2) Respaldo: primera hoja
     bio.seek(0)
     xls = pd.ExcelFile(bio, engine="openpyxl")
     first = xls.sheet_names[0]
@@ -211,7 +216,6 @@ def read_excel_table(uploaded_bytes: bytes, table_name: str = "SIOT") -> pd.Data
     return df
 
 def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    """Limpieza básica: nombres de columnas, elimina filas/columnas vacías, trim a strings."""
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
     df = df.dropna(axis=1, how="all")
@@ -222,11 +226,6 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def build_fields_attributes(row: dict, mapping: dict) -> list:
-    """
-    Convierte row (dict de la fila Excel) en fields_attributes que Pipefy espera:
-    [{"field_id": "...", "field_value": ...}, ...]
-    Solo incluye columnas mapeadas y con valor no vacío.
-    """
     attrs = []
     for col, field_id in mapping.items():
         if not field_id:
@@ -242,10 +241,6 @@ def build_fields_attributes(row: dict, mapping: dict) -> list:
     return attrs
 
 def pipefy_create_card(pipe_id: int, fields_attrs: list, token: str):
-    """
-    Llama a la mutación createCard de Pipefy (GraphQL).
-    Devuelve (ok, card_id, errors, raw_response_text)
-    """
     url = "https://api.pipefy.com/graphql"
     headers = {
         "Authorization": f"Bearer {token}",
@@ -259,82 +254,53 @@ def pipefy_create_card(pipe_id: int, fields_attrs: list, token: str):
     }
     """
     variables = {
-        "input": {
-            "pipe_id": pipe_id,
-            "fields_attributes": fields_attrs
-        }
+        "input": {"pipe_id": pipe_id, "fields_attributes": fields_attrs}
     }
     try:
-        resp = requests.post(
-            url,
-            headers=headers,
-            json={"query": mutation, "variables": variables},
-            timeout=60
-        )
+        resp = requests.post(url, headers=headers, json={"query": mutation, "variables": variables}, timeout=60)
     except Exception as e:
         return False, None, [{"message": str(e)}], str(e)
-
     ok = (resp.status_code == 200)
     data = {}
     try:
         data = resp.json()
     except Exception:
         pass
-
     errors = data.get("errors")
     card_id = None
     if data.get("data") and data["data"].get("createCard"):
         card_id = data["data"]["createCard"]["card"]["id"]
-
     return ok and (errors is None) and (card_id is not None), card_id, errors, resp.text
 
 # ---------- APP ----------
 if require_auth():
-    # Logo en barra lateral (branding)
     render_logo_sidebar(width_px=150)
-
     with st.sidebar:
         st.subheader("🔧 Configuración Pipefy")
         pipe_id = st.text_input("Pipe ID", placeholder="Ej. 123456789")
         token = st.text_input("API Token", type="password", placeholder="Token secreto de Pipefy")
-        dry_run = st.toggle("Simular (no crea tarjetas)", value=True,
-                            help="Haz pruebas antes de subir definitivamente.")
+        dry_run = st.toggle("Simular (no crea tarjetas)", value=True, help="Haz pruebas antes de subir definitivamente.")
 
-    # Logo centrado en la página principal (con un pequeño spacer arriba)
     st.markdown('<div class="header-spacer"></div>', unsafe_allow_html=True)
     render_logo_center(width_px=220)
 
     st.title("📤 SIOT → Pipefy")
     st.caption("Sube tu archivo Excel, detectamos la tabla **SIOT**, y creamos una tarjeta por cada fila con datos.")
 
-    # ---------- CARGA DE ARCHIVO ----------
     up = st.file_uploader("Subir Excel (.xlsx)", type=["xlsx"], accept_multiple_files=False)
-
     if up is not None:
         content = up.read()
         df = read_excel_table(content, "SIOT")
         if df is None or df.empty:
             st.error("No se encontró la tabla 'SIOT' ni datos en la primera hoja. Verifica tu archivo.")
             st.stop()
-
         df = clean_dataframe(df)
         st.subheader("👀 Vista previa")
         st.dataframe(df.head(50), use_container_width=True)
 
-        # ---------- Mapeo columnas → field_id ----------
         st.subheader("🧭 Mapeo de columnas → campos de Pipefy")
-
-        default_mapping_literal = json.dumps(
-            {str(c): "" for c in df.columns},
-            ensure_ascii=False,
-            indent=2
-        )
-
-        mapping_json = st.text_area(
-            "Pega aquí el JSON de mapeo (formato: {'ColumnaExcel': 'field_id'})",
-            value=default_mapping_literal,
-            height=260
-        )
+        default_mapping_literal = json.dumps({str(c): "" for c in df.columns}, ensure_ascii=False, indent=2)
+        mapping_json = st.text_area("Pega aquí el JSON de mapeo (formato: {'ColumnaExcel': 'field_id'})", value=default_mapping_literal, height=260)
 
         try:
             mapping = json.loads(mapping_json)
@@ -348,11 +314,7 @@ if require_auth():
         st.markdown(f"**Filas detectadas con datos:** {len(df_upload)}")
 
         with st.expander("🔎 Filtro opcional"):
-            cols = st.multiselect(
-                "Columnas a mostrar en el resumen",
-                options=list(df_upload.columns),
-                default=list(df_upload.columns)[:6]
-            )
+            cols = st.multiselect("Columnas a mostrar en el resumen", options=list(df_upload.columns), default=list(df_upload.columns)[:6])
             st.dataframe(df_upload[cols].head(100), use_container_width=True)
 
         c1, c2, c3 = st.columns(3)
@@ -364,40 +326,28 @@ if require_auth():
             st.markdown(f"<div class='kpi'><b>Filas a subir</b><br>{len(df_upload)}</div>", unsafe_allow_html=True)
 
         st.markdown("---")
-
-        btn = st.button(
-            "🚀 Subir a Pipefy",
-            type="primary",
-            use_container_width=True,
-            disabled=(not pipe_id or not token)
-        )
-
+        btn = st.button("🚀 Subir a Pipefy", type="primary", use_container_width=True, disabled=(not pipe_id or not token))
         if btn:
             if not pipe_id or not token:
                 st.error("Completa el Pipe ID y el API Token.")
                 st.stop()
-
             try:
                 pipe_id_int = int(pipe_id)
             except:
                 st.error("Pipe ID debe ser numérico.")
                 st.stop()
-
             progress = st.progress(0.0, text="Iniciando...")
             logs = []
             ok_count, fail_count, skipped = 0, 0, 0
             total = len(df_upload)
-
             for i, (_, row) in enumerate(df_upload.iterrows(), start=1):
                 row_dict = row.to_dict()
                 fields = build_fields_attributes(row_dict, mapping)
-
                 if not fields:
                     skipped += 1
                     logs.append({"estado": "omitida", "razon": "Sin campos con datos", "fila": i})
-                    progress.progress(i/total, text=f"Omitida fila {i} (sin datos mapeados)")
+                    progress.progress(i/total, text=f"Omitida fila {i}")
                     continue
-
                 if dry_run:
                     ok_count += 1
                     logs.append({"estado": "simulada", "campos": fields, "fila": i})
@@ -410,17 +360,9 @@ if require_auth():
                         fail_count += 1
                         logs.append({"estado": "error", "fila": i, "detalle": errors or raw})
                         time.sleep(0.4)
-
                 time.sleep(0.15)
-                progress.progress(i/total, text=f"Procesadas {i} / {total}")
-
-            st.success(f"Proceso terminado. Éxitos: {ok_count} • Fallos: {fail_count} • Omitidas/Simuladas: {skipped}")
-            st.download_button(
-                "📥 Descargar log (JSON)",
-                data=json.dumps(logs, ensure_ascii=False, indent=2),
-                file_name="resultado_pipefy.json",
-                mime="application/json"
-            )
+                progress.progress(i/total, text=f"Procesadas {i}/{total}")
+            st.success(f"Proceso terminado. Éxitos: {ok_count} • Fallos: {fail_count} • Omitidas: {skipped}")
+            st.download_button("📥 Descargar log (JSON)", data=json.dumps(logs, ensure_ascii=False, indent=2), file_name="resultado_pipefy.json", mime="application/json")
 else:
     st.stop()
-
