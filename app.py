@@ -1,3 +1,4 @@
+# app.py
 import os
 import io
 import time
@@ -7,6 +8,7 @@ import pandas as pd
 import streamlit as st
 from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string
+from pathlib import Path
 
 # ---------- PAGE CONFIG ----------
 st.set_page_config(page_title="Carga SIOT → Pipefy", page_icon="📤", layout="wide")
@@ -16,7 +18,7 @@ st.markdown('''
 <style>
 .block-container {
     max-width: 1200px;
-    padding-top: 0rem !important;   /* <- elimina el espacio en blanco de arriba */
+    padding-top: 0rem !important;
     margin-top: 0 !important;
 }
 div.stButton > button {
@@ -49,45 +51,42 @@ small.help { color: #666; }
 # ---------- SIMPLE AUTH ----------
 AUTH_USERS = json.loads(os.environ.get("AUTH_USERS_JSON", os.getenv("AUTH_USERS_JSON", '{"admin":"admin"}')))
 
-from pathlib import Path
-import base64
+# ---------- LOGO HELPERS ----------
+def get_logo_path() -> str | None:
+    """
+    Devuelve la primera ruta existente del logo entre varias candidatas.
+    """
+    candidates = [
+        Path("/mnt/data/06ccb9c2-ca99-49b6-a58e-9452a7e6a452.png"),  # ruta confirmada
+        Path("/mnt/data/Logo EOMMT.png"),
+        Path(__file__).parent / "Logo EOMMT.png",
+        Path("Logo EOMMT.png"),
+        Path("logo_eommt.png"),
+        Path("assets/Logo EOMMT.png"),
+    ]
+    for p in candidates:
+        if p.exists():
+            return str(p)
+    return None
 
-from pathlib import Path
-import base64
-
+# ---------- LOGIN ----------
 def login_view():
-    # Centrado con columnas (sin HTML adicional)
+    # Centrar contenido del login
     left, center, right = st.columns([1, 1, 1])
-
     with center:
-        # Intentar cargar el logo
-        logo_candidates = [
-            Path(__file__).parent / "Logo EOMMT.png",
-            Path(__file__).parent / "logo_eommt.png",
-            Path("Logo EOMMT.png"),
-            Path("logo_eommt.png"),
-        ]
-        logo_path = next((str(p) for p in logo_candidates if p.exists()), None)
-
+        # Logo en login
+        logo_path = get_logo_path()
         if logo_path:
-            st.image(logo_path, width=180)
+            st.image(logo_path, width=200)
         else:
-            try:
-                with open("Logo EOMMT.png", "rb") as f:
-                    b64 = base64.b64encode(f.read()).decode("utf-8")
-                st.markdown(f"<img src='data:image/png;base64,{b64}' width='180'/>", unsafe_allow_html=True)
-            except Exception:
-                st.info("No se encontró el logo. Verifica el nombre exacto del archivo.")
+            st.info("No se encontró el logo. Verifica la ruta o el archivo.")
 
         st.markdown("### 🚇 Instrucción Operacional de Trabajos")
         st.markdown("## 🔐 Ingreso al sistema")
         st.write("Por favor ingresa tus credenciales para continuar:")
 
-        # Campos de usuario y contraseña
         user = st.text_input("Usuario", key="login_user", placeholder="Escribe tu usuario")
         pwd  = st.text_input("Contraseña", key="login_pwd", type="password", placeholder="Escribe tu contraseña")
-
-        # Botón
         ok = st.button("Ingresar", key="btn_login", use_container_width=True)
 
         if ok:
@@ -101,10 +100,8 @@ def login_view():
     return 'auth_user' in st.session_state
 
 def require_auth():
-    # Si ya hay sesión, permitir continuar
     if 'auth_user' in st.session_state:
         return True
-    # Si no, mostrar el login en la página principal y cortar el flujo
     ok = login_view()
     if not ok:
         st.stop()
@@ -112,14 +109,19 @@ def require_auth():
 
 # ---------- HELPERS ----------
 def read_excel_table(uploaded_bytes: bytes, table_name: str = "SIOT") -> pd.DataFrame:
+    """
+    Busca una tabla estructurada llamada 'SIOT' en el archivo; si no la encuentra,
+    usa la primera hoja como respaldo.
+    """
     bio = io.BytesIO(uploaded_bytes)
     wb = load_workbook(bio, data_only=True, read_only=True)
 
+    # 1) Intentar encontrar tabla estructurada "SIOT"
     for ws in wb.worksheets:
         tables = getattr(ws, "_tables", {}) or {}
         for t in tables.values():
             if t.name and t.name.lower() == table_name.lower():
-                ref = t.ref
+                ref = t.ref  # p.ej. "A1:K300"
                 start, end = ref.split(":")
                 start_col = ''.join(filter(str.isalpha, start))
                 start_row = int(''.join(filter(str.isdigit, start)))
@@ -142,6 +144,7 @@ def read_excel_table(uploaded_bytes: bytes, table_name: str = "SIOT") -> pd.Data
                 df = pd.DataFrame(body, columns=header)
                 return df
 
+    # 2) Respaldo: primera hoja
     bio.seek(0)
     xls = pd.ExcelFile(bio, engine="openpyxl")
     first = xls.sheet_names[0]
@@ -149,6 +152,7 @@ def read_excel_table(uploaded_bytes: bytes, table_name: str = "SIOT") -> pd.Data
     return df
 
 def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
+    """Limpieza básica: nombres de columnas, elimina filas/columnas vacías, trim a strings."""
     df = df.copy()
     df.columns = [str(c).strip() for c in df.columns]
     df = df.dropna(axis=1, how="all")
@@ -159,6 +163,11 @@ def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 def build_fields_attributes(row: dict, mapping: dict) -> list:
+    """
+    Convierte row (dict de la fila Excel) en fields_attributes que Pipefy espera:
+    [{"field_id": "...", "field_value": ...}, ...]
+    Solo incluye columnas mapeadas y con valor no vacío.
+    """
     attrs = []
     for col, field_id in mapping.items():
         if not field_id:
@@ -174,6 +183,10 @@ def build_fields_attributes(row: dict, mapping: dict) -> list:
     return attrs
 
 def pipefy_create_card(pipe_id: int, fields_attrs: list, token: str):
+    """
+    Llama a la mutación createCard de Pipefy (GraphQL).
+    Devuelve (ok, card_id, errors, raw_response_text)
+    """
     url = "https://api.pipefy.com/graphql"
     headers = {
         "Authorization": f"Bearer {token}",
@@ -225,15 +238,12 @@ if require_auth():
         dry_run = st.toggle("Simular (no crea tarjetas)", value=True,
                             help="Haz pruebas antes de subir definitivamente.")
 
-    # ---------- LOGO PRINCIPAL ----------
-    st.markdown(
-        """
-        <div style="text-align:center; margin-bottom: 10px;">
-            <img src="Logo EOMMT.png" width="260">
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    # ---------- LOGO EN PÁGINA PRINCIPAL ----------
+    logo_path = get_logo_path()
+    if logo_path:
+        c1, c2, c3 = st.columns([1, 2, 1])
+        with c2:
+            st.image(logo_path, width=220)
 
     st.title("📤 SIOT → Pipefy")
     st.caption("Sube tu archivo Excel, detectamos la tabla **SIOT**, y creamos una tarjeta por cada fila con datos.")
@@ -252,6 +262,7 @@ if require_auth():
         st.subheader("👀 Vista previa")
         st.dataframe(df.head(50), use_container_width=True)
 
+        # ---------- Mapeo columnas → field_id ----------
         st.subheader("🧭 Mapeo de columnas → campos de Pipefy")
 
         default_mapping_literal = json.dumps(
@@ -353,9 +364,3 @@ if require_auth():
             )
 else:
     st.stop()
-
-
-
-
-
-
