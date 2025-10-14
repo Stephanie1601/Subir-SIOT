@@ -23,10 +23,10 @@ html, body, [class*="css"] {
     font-family: 'Arial', sans-serif !important;
 }
 
-/* Contenedor principal más abajo */
+/* Contenedor principal más abajo para que no tape el logo */
 .block-container {
     max-width: 1200px;
-    padding-top: 4.2rem !important;   /* más espacio arriba para que se vea el logo */
+    padding-top: 4.2rem !important;
     margin-top: 0 !important;
 }
 
@@ -61,27 +61,31 @@ div.stButton > button {
     box-shadow: 0 3px 16px rgba(0,0,0,.05);
 }
 
-/* Tipografía por defecto */
+/* Encabezados globales (fallback) */
 h1, h2, h3 { 
     font-family: 'Arial', sans-serif !important;
     font-weight: 800;
 }
 
-/* Ajustes finos de encabezados del login */
-.login-title h2 { 
-    font-size: 2.6rem;        /* más grande para destacar */
-    line-height: 1.2; 
-    margin: .75rem 0 .25rem 0; 
-    color: #FF9016;           /* naranja EOMMT */
+/* ESTILOS ESPECÍFICOS DE LOGIN
+   Usamos etiquetas HTML reales <h2> y <h3> con estas clases
+   para que NO aparezcan "##" y podamos controlar tamaños. */
+.title-io {               /* 🚇 Instrucción Operacional de Trabajos */
+    font-size: 2.6rem;    /* MÁS GRANDE */
+    line-height: 1.2;
+    margin: 0.75rem 0 0.25rem 0;
+    color: #FF9016;       /* Naranja EOMMT */
+    font-weight: 800;
 }
-.login-subtitle h3 { 
-    font-size: 1.6rem; 
-    line-height: 1.2; 
-    margin: .5rem 0 .75rem 0; 
+.subtitle-login {         /* 🔐 Ingreso al sistema */
+    font-size: 1.6rem;    /* MÁS PEQUEÑO que el de arriba */
+    line-height: 1.2;
+    margin: 0.5rem 0 0.75rem 0;
     color: #444444;
+    font-weight: 800;
 }
 
-/* Espaciador superior */
+/* Espaciador superior fino */
 .header-spacer { height: 15px; }
 
 small.help { color: #666; }
@@ -114,7 +118,7 @@ def _find_logo_bytes() -> bytes | None:
     return None
 
 def render_logo_center(width_px: int = 220):
-    """Renderiza el logo siempre visible (lo incrusta como data URL Base64)."""
+    """Renderiza el logo incrustado como data URL Base64 (evita problemas de ruta)."""
     img_bytes = _find_logo_bytes()
     if not img_bytes:
         st.info("No se encontró el logo de EOMMT en el servidor.")
@@ -147,12 +151,15 @@ def render_logo_sidebar(width_px: int = 160):
 def login_view():
     left, center, right = st.columns([1, 1, 1])
     with center:
+        # margen extra arriba
         st.markdown('<div class="header-spacer"></div>', unsafe_allow_html=True)
+
+        # Logo
         render_logo_center(width_px=200)
 
-        # Títulos jerarquizados
-        st.markdown('<div class="login-title">## 🚇 Instrucción Operacional de Trabajos</div>', unsafe_allow_html=True)
-        st.markdown('<div class="login-subtitle">### 🔐 Ingreso al sistema</div>', unsafe_allow_html=True)
+        # TÍTULOS CON HTML + CLASES (ya NO hay "##")
+        st.markdown('<h2 class="title-io">🚇 Instrucción Operacional de Trabajos</h2>', unsafe_allow_html=True)
+        st.markdown('<h3 class="subtitle-login">🔐 Ingreso al sistema</h3>', unsafe_allow_html=True)
 
         st.write("Por favor ingresa tus credenciales para continuar:")
 
@@ -253,19 +260,19 @@ def pipefy_create_card(pipe_id: int, fields_attrs: list, token: str):
       }
     }
     """
-    variables = {
-        "input": {"pipe_id": pipe_id, "fields_attributes": fields_attrs}
-    }
+    variables = {"input": {"pipe_id": pipe_id, "fields_attributes": fields_attrs}}
     try:
         resp = requests.post(url, headers=headers, json={"query": mutation, "variables": variables}, timeout=60)
     except Exception as e:
         return False, None, [{"message": str(e)}], str(e)
+
     ok = (resp.status_code == 200)
     data = {}
     try:
         data = resp.json()
     except Exception:
         pass
+
     errors = data.get("errors")
     card_id = None
     if data.get("data") and data["data"].get("createCard"):
@@ -274,19 +281,23 @@ def pipefy_create_card(pipe_id: int, fields_attrs: list, token: str):
 
 # ---------- APP ----------
 if require_auth():
+    # Logo en la barra lateral
     render_logo_sidebar(width_px=150)
+
     with st.sidebar:
         st.subheader("🔧 Configuración Pipefy")
         pipe_id = st.text_input("Pipe ID", placeholder="Ej. 123456789")
         token = st.text_input("API Token", type="password", placeholder="Token secreto de Pipefy")
         dry_run = st.toggle("Simular (no crea tarjetas)", value=True, help="Haz pruebas antes de subir definitivamente.")
 
+    # Logo centrado arriba
     st.markdown('<div class="header-spacer"></div>', unsafe_allow_html=True)
     render_logo_center(width_px=220)
 
     st.title("📤 SIOT → Pipefy")
     st.caption("Sube tu archivo Excel, detectamos la tabla **SIOT**, y creamos una tarjeta por cada fila con datos.")
 
+    # ---------- CARGA DE ARCHIVO ----------
     up = st.file_uploader("Subir Excel (.xlsx)", type=["xlsx"], accept_multiple_files=False)
     if up is not None:
         content = up.read()
@@ -294,13 +305,18 @@ if require_auth():
         if df is None or df.empty:
             st.error("No se encontró la tabla 'SIOT' ni datos en la primera hoja. Verifica tu archivo.")
             st.stop()
+
         df = clean_dataframe(df)
         st.subheader("👀 Vista previa")
         st.dataframe(df.head(50), use_container_width=True)
 
         st.subheader("🧭 Mapeo de columnas → campos de Pipefy")
         default_mapping_literal = json.dumps({str(c): "" for c in df.columns}, ensure_ascii=False, indent=2)
-        mapping_json = st.text_area("Pega aquí el JSON de mapeo (formato: {'ColumnaExcel': 'field_id'})", value=default_mapping_literal, height=260)
+        mapping_json = st.text_area(
+            "Pega aquí el JSON de mapeo (formato: {'ColumnaExcel': 'field_id'})",
+            value=default_mapping_literal,
+            height=260
+        )
 
         try:
             mapping = json.loads(mapping_json)
@@ -314,7 +330,11 @@ if require_auth():
         st.markdown(f"**Filas detectadas con datos:** {len(df_upload)}")
 
         with st.expander("🔎 Filtro opcional"):
-            cols = st.multiselect("Columnas a mostrar en el resumen", options=list(df_upload.columns), default=list(df_upload.columns)[:6])
+            cols = st.multiselect(
+                "Columnas a mostrar en el resumen",
+                options=list(df_upload.columns),
+                default=list(df_upload.columns)[:6]
+            )
             st.dataframe(df_upload[cols].head(100), use_container_width=True)
 
         c1, c2, c3 = st.columns(3)
@@ -336,18 +356,22 @@ if require_auth():
             except:
                 st.error("Pipe ID debe ser numérico.")
                 st.stop()
+
             progress = st.progress(0.0, text="Iniciando...")
             logs = []
             ok_count, fail_count, skipped = 0, 0, 0
             total = len(df_upload)
+
             for i, (_, row) in enumerate(df_upload.iterrows(), start=1):
                 row_dict = row.to_dict()
                 fields = build_fields_attributes(row_dict, mapping)
+
                 if not fields:
                     skipped += 1
                     logs.append({"estado": "omitida", "razon": "Sin campos con datos", "fila": i})
                     progress.progress(i/total, text=f"Omitida fila {i}")
                     continue
+
                 if dry_run:
                     ok_count += 1
                     logs.append({"estado": "simulada", "campos": fields, "fila": i})
@@ -360,9 +384,16 @@ if require_auth():
                         fail_count += 1
                         logs.append({"estado": "error", "fila": i, "detalle": errors or raw})
                         time.sleep(0.4)
+
                 time.sleep(0.15)
                 progress.progress(i/total, text=f"Procesadas {i}/{total}")
+
             st.success(f"Proceso terminado. Éxitos: {ok_count} • Fallos: {fail_count} • Omitidas: {skipped}")
-            st.download_button("📥 Descargar log (JSON)", data=json.dumps(logs, ensure_ascii=False, indent=2), file_name="resultado_pipefy.json", mime="application/json")
+            st.download_button(
+                "📥 Descargar log (JSON)",
+                data=json.dumps(logs, ensure_ascii=False, indent=2),
+                file_name="resultado_pipefy.json",
+                mime="application/json"
+            )
 else:
     st.stop()
