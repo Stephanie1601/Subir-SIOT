@@ -12,8 +12,6 @@ from datetime import time as dtime, datetime, date
 import requests
 import pandas as pd
 import streamlit as st
-from openpyxl import load_workbook
-from openpyxl.utils import column_index_from_string
 
 # ---------- PAGE CONFIG ----------
 st.set_page_config(page_title="Carga SIOT → Pipefy", page_icon="📤", layout="wide")
@@ -50,24 +48,20 @@ def _find_logo_bytes() -> bytes | None:
         Path("assets/Logo EOMMT.png"),
     ]:
         try:
-            if p.exists():
-                return p.read_bytes()
-        except Exception:
-            pass
+            if p.exists(): return p.read_bytes()
+        except Exception: pass
     return None
 
 def render_logo_center(width_px: int = 220):
     img = _find_logo_bytes()
-    if not img:
-        return
+    if not img: return
     b64 = base64.b64encode(img).decode("ascii")
     st.markdown(f"""<div style="text-align:center; margin: 10px 0 8px 0;">
         <img src="data:image/png;base64,{b64}" width="{width_px}" /></div>""", unsafe_allow_html=True)
 
 def render_logo_sidebar(width_px: int = 160):
     img = _find_logo_bytes()
-    if not img:
-        return
+    if not img: return
     b64 = base64.b64encode(img).decode("ascii")
     st.sidebar.markdown(f"""<div style="text-align:center; margin: 6px 0 10px 0;">
         <img src="data:image/png;base64,{b64}" width="{width_px}" /></div>""", unsafe_allow_html=True)
@@ -93,8 +87,7 @@ def login_view():
     return 'auth_user' in st.session_state
 
 def require_auth():
-    if 'auth_user' in st.session_state:
-        return True
+    if 'auth_user' in st.session_state: return True
     ok = login_view()
     if not ok: st.stop()
     return True
@@ -106,13 +99,9 @@ def logout_button():
             st.success("Sesión cerrada.")
             st.rerun()
 
-# ---------- NORMALIZACIÓN DE ETIQUETAS ----------
+# ---------- NORMALIZACIÓN ----------
 def normalize_label(s: str) -> str:
-    """
-    Normaliza etiquetas para comparar/Mapear: quita NBSP, acentos, colapsa espacios, trim, mayúsculas.
-    """
-    if s is None:
-        return ""
+    if s is None: return ""
     s = str(s).replace("\xa0", " ")
     s = unicodedata.normalize("NFKD", s)
     s = "".join(c for c in s if not unicodedata.combining(c))
@@ -120,8 +109,15 @@ def normalize_label(s: str) -> str:
     s = re.sub(r"\s+", " ", s)
     return s.upper()
 
-# ---------- PIPEFY / EXCEL HELPERS ----------
-# Mapeo AUTOMÁTICO: encabezado Excel -> field_id de Pipefy
+# Sinónimos para encabezados largos → etiqueta corta esperada
+HEADER_SYNONYMS = {
+    "CCU (COORDINADOR DE CUADRILLA) NOMBRE APELLIDO": "CCU",
+    "CCU (COORDINADOR DE CUADRILLA)": "CCU",
+    "INTEGRANTES DEL EQUIPO DE CUADRILLA (NOMBRE APELLIDO - NÚMERO DE CÉDULA)": "INTEGRANTES DE CUADRILLA",
+    "INTEGRANTES DEL EQUIPO DE CUADRILLA (NOMBRE APELLIDO - NUMERO DE CEDULA)": "INTEGRANTES DE CUADRILLA",
+}
+
+# ---------- Mapeo Excel -> Pipefy ----------
 LABEL_TO_FIELD_ID = {
     "IOT": "siot",
     "EMPRESA": "empresa",
@@ -159,26 +155,52 @@ LABEL_TO_FIELD_ID = {
     "SELECCIONAR ETIQUETA": "seleccionar_etiqueta",
     "CORREO ELECTRÓNICO DEL SOLICITANTE": "correo_electr_nico_del_solicitante",
 }
-# Diccionario normalizado -> field_id
-NORM_LABEL_TO_FIELD_ID = {normalize_label(k): v for k, v in LABEL_TO_FIELD_ID.items()}
+# Normalizado → field_id (incluye sinónimos)
+NORM_TO_FIELD_ID = {}
+for k, v in LABEL_TO_FIELD_ID.items():
+    NORM_TO_FIELD_ID[normalize_label(k)] = v
+for long_key, short_key in HEADER_SYNONYMS.items():
+    NORM_TO_FIELD_ID[normalize_label(long_key)] = LABEL_TO_FIELD_ID[short_key]
 
-def read_excel_header_row(uploaded_bytes: bytes, header_row_index_1based: int = 8) -> pd.DataFrame:
-    # Lee PRIMERA hoja, tomando fila 8 como encabezados
+# ---------- LECTURA EXCEL CON DETECCIÓN DE ENCABEZADO ----------
+def read_excel_detect_header(uploaded_bytes: bytes, search_rows: int = 30) -> tuple[pd.DataFrame, int]:
+    """
+    Lee la PRIMERA hoja sin encabezado y detecta la fila de encabezados buscando 'EMPRESA'
+    (normalizado) y al menos otro label conocido. Devuelve (df_con_encabezados, idx_fila_header_1based).
+    """
     bio = io.BytesIO(uploaded_bytes)
-    return pd.read_excel(bio, engine="openpyxl", header=header_row_index_1based - 1)
+    raw = pd.read_excel(bio, engine="openpyxl", header=None)
 
-def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
-    df = df.copy()
-    # remover columnas Unnamed
-    df = df.loc[:, [c for c in df.columns if not str(c).startswith("Unnamed")]]
-    # recortar strings
-    for c in df.columns:
-        if df[c].dtype == object:
-            df[c] = df[c].apply(lambda x: x.strip() if isinstance(x, str) else x)
-    # quitar filas vacías
-    df = df.dropna(how="all")
-    return df
+    header_row = None
+    for i in range(min(search_rows, len(raw))):
+        row_vals = [normalize_label(x) for x in raw.iloc[i].tolist()]
+        if not any(row_vals): 
+            continue
+        # ¿Contiene EMPRESA u otro label fuerte?
+        hits = sum(1 for val in row_vals if val in NORM_TO_FIELD_ID or val in ("EMPRESA", "CCU"))
+        if hits >= 1 and ("EMPRESA" in row_vals):
+            header_row = i
+            break
 
+    if header_row is None:
+        # fallback: buscar la primera fila con más de 3 celdas no vacías
+        for i in range(min(search_rows, len(raw))):
+            row_vals = [str(x).strip() for x in raw.iloc[i].tolist() if pd.notna(x) and str(x).strip() != ""]
+            if len(row_vals) >= 3:
+                header_row = i
+                break
+
+    if header_row is None:
+        # último fallback: asumir fila 8
+        header_row = 7
+
+    # Construir DF con esa fila como encabezado
+    headers = raw.iloc[header_row].tolist()
+    df = raw.iloc[header_row+1:].copy()
+    df.columns = headers
+    return df, header_row + 1  # 1-based índice de encabezado
+
+# ---------- FORMATEO / PIPEFY ----------
 def _fmt_value_for_pipefy(value):
     if isinstance(value, (datetime, date)):
         return value.strftime("%Y-%m-%d")
@@ -189,14 +211,14 @@ def _fmt_value_for_pipefy(value):
 def build_fields_attributes(row: dict, mapping: dict) -> list:
     attrs = []
     for col, field_id in mapping.items():
-        if not field_id:
+        if not field_id: 
             continue
         value = row.get(col)
-        if value is None:
+        if value is None: 
             continue
-        if isinstance(value, float) and pd.isna(value):
+        if isinstance(value, float) and pd.isna(value): 
             continue
-        if isinstance(value, str) and value.strip() == "":
+        if isinstance(value, str) and value.strip() == "": 
             continue
         value = _fmt_value_for_pipefy(value)
         attrs.append({"field_id": field_id, "field_value": value})
@@ -212,29 +234,24 @@ def pipefy_create_card(pipe_id: int, fields_attrs: list, token: str):
       }
     }
     """
-    variables = {"input": {"pipe_id": pipe_id, "fields_attributes": fields_attrs}}
+    variables = {"input": {"pipe_id": int(pipe_id), "fields_attributes": fields_attrs}}
     try:
         resp = requests.post(url, headers=headers, json={"query": mutation, "variables": variables}, timeout=60)
     except Exception as e:
         return False, None, [{"message": str(e)}], str(e)
+
     ok = (resp.status_code == 200)
     data = {}
-    try:
-        data = resp.json()
-    except Exception:
-        pass
+    try: data = resp.json()
+    except Exception: pass
     errors = data.get("errors")
-    card_id = None
-    if data.get("data") and data["data"].get("createCard"):
-        card_id = data["data"]["createCard"]["card"]["id"]
+    card_id = data.get("data", {}).get("createCard", {}).get("card", {}).get("id")
     return ok and (errors is None) and (card_id is not None), card_id, errors, resp.text
 
 # ---------- SECRETS / VARS ----------
 def get_secret(name, default=None):
-    try:
-        return st.secrets[name]
-    except Exception:
-        return os.getenv(name, default)
+    try: return st.secrets[name]
+    except Exception: return os.getenv(name, default)
 
 PIPE_ID_ENV = get_secret("PIPEFY_PIPE_ID")
 TOKEN_ENV   = get_secret("PIPEFY_TOKEN")
@@ -255,68 +272,68 @@ if require_auth():
     else:
         with st.sidebar:
             st.markdown("<span class='badge'>Modo automático (secrets)</span>", unsafe_allow_html=True)
-            st.write(f"Pipe ID: **{PIPE_ID_ENV}**")
-            st.write("Token: **••••••••**")
-            st.write(f"Dry run: **{DRY_RUN_ENV}**")
+            st.write(f"Pipe ID: **{PIPE_ID_ENV}**"); st.write("Token: **••••••••**"); st.write(f"Dry run: **{DRY_RUN_ENV}**")
         pipe_id = str(PIPE_ID_ENV); token = str(TOKEN_ENV); dry_run = DRY_RUN_ENV
 
     st.markdown('<div class="header-spacer"></div>', unsafe_allow_html=True)
     render_logo_center(220)
 
     st.title("📤 SIOT → Pipefy")
-    st.caption("Se toma la **fila 8** como encabezados y se crean tarjetas desde la **fila 9** hasta la última con **EMPRESA**.")
+    st.caption("Detecta automáticamente la fila de encabezados (busca **EMPRESA**) y crea tarjetas desde la fila siguiente hasta la última con **EMPRESA**.")
 
     up = st.file_uploader("Subir Excel (.xlsx)", type=["xlsx"], accept_multiple_files=False)
 
     if up is not None:
         content = up.read()
 
-        # 1) Leer y limpiar según tu formato (encabezados en fila 8)
-        df = read_excel_header_row(content, header_row_index_1based=8)
-        df = clean_dataframe(df)
+        # 1) Detectar encabezado y construir DF
+        df_raw, header_row_1based = read_excel_detect_header(content, search_rows=30)
 
-        # ----- Normalizar nombres de columnas para buscar EMPRESA y mapear -----
+        # Limpiar columnas 'Unnamed' y espacios
+        df = df_raw.copy()
+        df = df.loc[:, [c for c in df.columns if str(c).strip() != "" and not str(c).startswith("Unnamed")]]
+        for c in df.columns:
+            if df[c].dtype == object:
+                df[c] = df[c].apply(lambda x: x.strip() if isinstance(x, str) else x)
+        df = df.dropna(how="all")
+
+        # Mapa normalizado de columnas originales
         orig_cols = list(df.columns)
         norm_cols = [normalize_label(c) for c in orig_cols]
         norm_to_orig = dict(zip(norm_cols, orig_cols))
 
-        # Validar EMPRESA (normalizado)
+        # 2) Validar EMPRESA
         if "EMPRESA" not in norm_cols:
-            st.error("No se encontró la columna 'EMPRESA' en la fila 8 (puede tener espacios/acentos invisibles). "
-                     "Encabezados detectados: " + ", ".join(orig_cols))
+            st.error("No se encontró la columna 'EMPRESA' en la fila de encabezado detectada.\n\nEncabezados detectados: " + ", ".join([str(c) for c in orig_cols]))
             st.stop()
-
         emp_col = norm_to_orig["EMPRESA"]
 
-        # 2) Desde fila 9 (df ya tiene encabezado en fila 8, así que iloc[1:] es fila 9)
-        df_from_9 = df.iloc[1:].copy()
-
         # 3) Limitar hasta la última fila con EMPRESA no vacía
-        mask_emp = df_from_9[emp_col].astype(str).str.strip().replace({"None": "", "nan": ""}) != ""
+        mask_emp = df[emp_col].astype(str).str.strip().replace({"None": "", "nan": ""}) != ""
         if not mask_emp.any():
-            st.error("No hay datos a partir de la fila 9 en 'EMPRESA'.")
+            st.error("No hay datos debajo del encabezado en 'EMPRESA'.")
             st.stop()
-        last_idx = df_from_9.index[mask_emp].max()
-        df_data = df_from_9.loc[df_from_9.index.min(): last_idx].copy()
+        last_idx = df.index[mask_emp].max()
+        df_data = df.loc[df.index.min(): last_idx].copy()
 
-        st.subheader("👀 Vista previa (desde fila 9 hasta última con EMPRESA)")
+        st.subheader(f"👀 Vista previa (encabezado en fila {header_row_1based}; datos desde fila {header_row_1based+1})")
         st.dataframe(df_data.head(50), use_container_width=True)
 
-        # 4) Mapeo automático basado en columnas presentes (normalizado)
+        # 4) Mapeo AUTOMÁTICO: usar sinónimos y normalización
         auto_mapping = {}
         for ncol, orig in zip(norm_cols, orig_cols):
-            if ncol in NORM_LABEL_TO_FIELD_ID:
-                auto_mapping[orig] = NORM_LABEL_TO_FIELD_ID[ncol]
+            if ncol in NORM_TO_FIELD_ID:
+                auto_mapping[orig] = NORM_TO_FIELD_ID[ncol]
 
         st.markdown("**Columnas mapeadas automáticamente:** " + (", ".join(auto_mapping.keys()) if auto_mapping else "ninguna"))
-        not_mapped = [c for c in orig_cols if c not in auto_mapping and not str(c).startswith("Unnamed")]
-        if not_mapped:
-            st.caption("Columnas sin mapeo (no se enviarán): " + ", ".join(not_mapped))
+        missing = [c for c in orig_cols if c not in auto_mapping and not str(c).startswith("Unnamed")]
+        if missing:
+            st.caption("Columnas sin mapeo (no se enviarán): " + ", ".join(missing))
 
         # 5) KPIs
         c1, c2, c3 = st.columns(3)
         with c1: st.markdown(f"<div class='kpi'><b>Columnas mapeadas</b><br>{len(auto_mapping)}</div>", unsafe_allow_html=True)
-        with c2: st.markdown(f"<div class='kpi'><b>Filas totales (desde fila 9)</b><br>{len(df_from_9)}</div>", unsafe_allow_html=True)
+        with c2: st.markdown(f"<div class='kpi'><b>Filas totales debajo del encabezado</b><br>{len(df)}</div>", unsafe_allow_html=True)
         with c3: st.markdown(f"<div class='kpi'><b>Filas a subir</b><br>{len(df_data)}</div>", unsafe_allow_html=True)
 
         st.markdown("---")
@@ -328,7 +345,7 @@ if require_auth():
         st.info(f"Iniciando proceso {'(simulación)' if dry_run else ''} con Pipe ID {pipe_id}…")
 
         try:
-            pipe_id_int = int(pipe_id)
+            int(pipe_id)
         except:
             st.error("Pipe ID debe ser numérico.")
             st.stop()
@@ -344,25 +361,25 @@ if require_auth():
 
             if not fields:
                 skipped += 1
-                logs.append({"estado": "omitida", "razon": "Sin campos mapeados con datos", "fila_excel": i + 8})
-                progress.progress(i/total, text=f"Omitida fila Excel {i+8} (sin datos mapeados)")
+                logs.append({"estado": "omitida", "razon": "Sin campos mapeados con datos", "fila_excel": header_row_1based + i})
+                progress.progress(i/total, text=f"Omitida fila Excel {header_row_1based + i} (sin datos mapeados)")
                 continue
 
             if dry_run:
                 ok_count += 1
-                logs.append({"estado": "simulada", "campos": fields, "fila_excel": i + 8})
+                logs.append({"estado": "simulada", "campos": fields, "fila_excel": header_row_1based + i})
             else:
-                ok, card_id, errors, raw = pipefy_create_card(pipe_id_int, fields, token)
+                ok, card_id, errors, raw = pipefy_create_card(pipe_id, fields, token)
                 if ok and card_id:
                     ok_count += 1
-                    logs.append({"estado": "ok", "card_id": card_id, "fila_excel": i + 8})
+                    logs.append({"estado": "ok", "card_id": card_id, "fila_excel": header_row_1based + i})
                 else:
                     fail_count += 1
-                    logs.append({"estado": "error", "fila_excel": i + 8, "detalle": errors or raw})
+                    logs.append({"estado": "error", "fila_excel": header_row_1based + i, "detalle": errors or raw})
                     time.sleep(0.4)
 
             time.sleep(0.15)
-            progress.progress(i/total, text=f"Procesadas {i}/{total} (desde fila Excel 9)")
+            progress.progress(i/total, text=f"Procesadas {i}/{total} (desde fila Excel {header_row_1based+1})")
 
         st.success(f"Proceso terminado. Éxitos: {ok_count} • Fallos: {fail_count} • Omitidas: {skipped}")
         st.download_button(
