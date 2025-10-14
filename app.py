@@ -57,7 +57,7 @@ div.stButton > button {
 }
 
 /* Tipografías por defecto */
-h1, h2, h3 { font-weight: 800; }
+h1, h2, h3 { font-weight: 1000; }
 small.help { color: #666; }
 
 /* Ajustes finos de los encabezados del login:
@@ -139,8 +139,8 @@ def login_view():
         render_logo_center(width_px=200)
 
         # Hacemos "Instrucción..." más grande que "Ingreso..."
-        st.markdown('<div class="login-title">## 🚇 Instrucción Operacional de Trabajos</div>', unsafe_allow_html=True)
-        st.markdown('<div class="login-subtitle">### 🔐 Ingreso al sistema</div>', unsafe_allow_html=True)
+        st.markdown('<div class="login-title"🚇 Instrucción Operacional de Trabajos</div>', unsafe_allow_html=True)
+        st.markdown('<div class="login-subtitle" Ingreso al sistema</div>', unsafe_allow_html=True)
 
         st.write("Por favor ingresa tus credenciales para continuar:")
 
@@ -423,3 +423,4 @@ if require_auth():
             )
 else:
     st.stop()
+
