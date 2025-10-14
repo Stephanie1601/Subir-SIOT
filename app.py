@@ -1,9 +1,11 @@
 # app.py
 import os
 import io
+import re
 import time
 import json
 import base64
+import unicodedata
 from pathlib import Path
 from datetime import time as dtime, datetime, date
 
@@ -104,8 +106,22 @@ def logout_button():
             st.success("Sesión cerrada.")
             st.rerun()
 
+# ---------- NORMALIZACIÓN DE ETIQUETAS ----------
+def normalize_label(s: str) -> str:
+    """
+    Normaliza etiquetas para comparar/Mapear: quita NBSP, acentos, colapsa espacios, trim, mayúsculas.
+    """
+    if s is None:
+        return ""
+    s = str(s).replace("\xa0", " ")
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(c for c in s if not unicodedata.combining(c))
+    s = s.strip()
+    s = re.sub(r"\s+", " ", s)
+    return s.upper()
+
 # ---------- PIPEFY / EXCEL HELPERS ----------
-# Mapeo AUTOMÁTICO: encabezado Excel -> field_id de Pipefy (coincidencia EXACTA)
+# Mapeo AUTOMÁTICO: encabezado Excel -> field_id de Pipefy
 LABEL_TO_FIELD_ID = {
     "IOT": "siot",
     "EMPRESA": "empresa",
@@ -140,31 +156,30 @@ LABEL_TO_FIELD_ID = {
     "BLOQUEO DE VÍA": "bloqueo_de_v_a_1",
     "DESDE": "bloqueo_desde",
     "HASTA": "hasta",
-    "Seleccionar etiqueta": "seleccionar_etiqueta",
+    "SELECCIONAR ETIQUETA": "seleccionar_etiqueta",
     "CORREO ELECTRÓNICO DEL SOLICITANTE": "correo_electr_nico_del_solicitante",
 }
+# Diccionario normalizado -> field_id
+NORM_LABEL_TO_FIELD_ID = {normalize_label(k): v for k, v in LABEL_TO_FIELD_ID.items()}
 
 def read_excel_header_row(uploaded_bytes: bytes, header_row_index_1based: int = 8) -> pd.DataFrame:
+    # Lee PRIMERA hoja, tomando fila 8 como encabezados
     bio = io.BytesIO(uploaded_bytes)
-    # Tomamos la PRIMERA hoja y especificamos que la fila 8 son los encabezados
     return pd.read_excel(bio, engine="openpyxl", header=header_row_index_1based - 1)
 
 def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    # eliminar columnas "Unnamed"
+    # remover columnas Unnamed
     df = df.loc[:, [c for c in df.columns if not str(c).startswith("Unnamed")]]
-    # limpiar encabezados
-    df.columns = [str(c).strip() for c in df.columns]
-    # eliminar filas completamente vacías
-    df = df.dropna(how="all")
-    # trim strings
+    # recortar strings
     for c in df.columns:
         if df[c].dtype == object:
             df[c] = df[c].apply(lambda x: x.strip() if isinstance(x, str) else x)
+    # quitar filas vacías
+    df = df.dropna(how="all")
     return df
 
 def _fmt_value_for_pipefy(value):
-    # fechas -> 'YYYY-MM-DD'; horas -> 'HH:MM'
     if isinstance(value, (datetime, date)):
         return value.strftime("%Y-%m-%d")
     if isinstance(value, dtime):
@@ -202,7 +217,6 @@ def pipefy_create_card(pipe_id: int, fields_attrs: list, token: str):
         resp = requests.post(url, headers=headers, json={"query": mutation, "variables": variables}, timeout=60)
     except Exception as e:
         return False, None, [{"message": str(e)}], str(e)
-
     ok = (resp.status_code == 200)
     data = {}
     try:
@@ -244,9 +258,7 @@ if require_auth():
             st.write(f"Pipe ID: **{PIPE_ID_ENV}**")
             st.write("Token: **••••••••**")
             st.write(f"Dry run: **{DRY_RUN_ENV}**")
-        pipe_id = str(PIPE_ID_ENV)
-        token   = str(TOKEN_ENV)
-        dry_run = DRY_RUN_ENV
+        pipe_id = str(PIPE_ID_ENV); token = str(TOKEN_ENV); dry_run = DRY_RUN_ENV
 
     st.markdown('<div class="header-spacer"></div>', unsafe_allow_html=True)
     render_logo_center(220)
@@ -263,32 +275,45 @@ if require_auth():
         df = read_excel_header_row(content, header_row_index_1based=8)
         df = clean_dataframe(df)
 
-        if "EMPRESA" not in df.columns:
-            st.error("No se encontró la columna 'EMPRESA' en la fila 8. Verifica el formato.")
+        # ----- Normalizar nombres de columnas para buscar EMPRESA y mapear -----
+        orig_cols = list(df.columns)
+        norm_cols = [normalize_label(c) for c in orig_cols]
+        norm_to_orig = dict(zip(norm_cols, orig_cols))
+
+        # Validar EMPRESA (normalizado)
+        if "EMPRESA" not in norm_cols:
+            st.error("No se encontró la columna 'EMPRESA' en la fila 8 (puede tener espacios/acentos invisibles). "
+                     "Encabezados detectados: " + ", ".join(orig_cols))
             st.stop()
 
-        # 2) Desde fila 9
+        emp_col = norm_to_orig["EMPRESA"]
+
+        # 2) Desde fila 9 (df ya tiene encabezado en fila 8, así que iloc[1:] es fila 9)
         df_from_9 = df.iloc[1:].copy()
 
         # 3) Limitar hasta la última fila con EMPRESA no vacía
-        mask_emp = df_from_9["EMPRESA"].astype(str).str.strip() != ""
+        mask_emp = df_from_9[emp_col].astype(str).str.strip().replace({"None": "", "nan": ""}) != ""
         if not mask_emp.any():
             st.error("No hay datos a partir de la fila 9 en 'EMPRESA'.")
             st.stop()
         last_idx = df_from_9.index[mask_emp].max()
         df_data = df_from_9.loc[df_from_9.index.min(): last_idx].copy()
 
-        st.subheader("👀 Vista previa (desde fila 9)")
+        st.subheader("👀 Vista previa (desde fila 9 hasta última con EMPRESA)")
         st.dataframe(df_data.head(50), use_container_width=True)
 
-        # 4) Mapeo automático basado en tus encabezados presentes
-        auto_mapping = {col: LABEL_TO_FIELD_ID[col] for col in df_data.columns if col in LABEL_TO_FIELD_ID}
+        # 4) Mapeo automático basado en columnas presentes (normalizado)
+        auto_mapping = {}
+        for ncol, orig in zip(norm_cols, orig_cols):
+            if ncol in NORM_LABEL_TO_FIELD_ID:
+                auto_mapping[orig] = NORM_LABEL_TO_FIELD_ID[ncol]
 
         st.markdown("**Columnas mapeadas automáticamente:** " + (", ".join(auto_mapping.keys()) if auto_mapping else "ninguna"))
-        not_mapped = [c for c in df_data.columns if c not in auto_mapping and not str(c).startswith("Unnamed")]
+        not_mapped = [c for c in orig_cols if c not in auto_mapping and not str(c).startswith("Unnamed")]
         if not_mapped:
             st.caption("Columnas sin mapeo (no se enviarán): " + ", ".join(not_mapped))
 
+        # 5) KPIs
         c1, c2, c3 = st.columns(3)
         with c1: st.markdown(f"<div class='kpi'><b>Columnas mapeadas</b><br>{len(auto_mapping)}</div>", unsafe_allow_html=True)
         with c2: st.markdown(f"<div class='kpi'><b>Filas totales (desde fila 9)</b><br>{len(df_from_9)}</div>", unsafe_allow_html=True)
