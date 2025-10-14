@@ -16,21 +16,29 @@ from openpyxl.utils import column_index_from_string
 st.set_page_config(page_title="Carga SIOT → Pipefy", page_icon="📤", layout="wide")
 
 # ---------- THEME / CSS ----------
+# Subo el padding-top para empujar TODO hacia abajo y evitar que la barra superior lo tape.
 st.markdown('''
 <style>
+/* Contenedor principal más abajo */
 .block-container {
     max-width: 1200px;
-    padding-top: 0rem !important;   /* eliminar espacio superior */
+    padding-top: 3.75rem !important;   /* << antes estaba 0; ahora ~60px */
     margin-top: 0 !important;
 }
+
+/* Botones */
 div.stButton > button {
     border-radius: 12px;
     padding: 0.6rem 1rem;
     font-weight: 600;
 }
+
+/* Sidebar */
 .stSidebar, .sidebar .sidebar-content {
     background: linear-gradient(180deg, #fafafa, #f0f0f0);
 }
+
+/* Tarjetas KPI */
 .kpi {
     padding: 12px 16px;
     border-radius: 14px;
@@ -38,6 +46,8 @@ div.stButton > button {
     box-shadow: 0 3px 12px rgba(0,0,0,.06);
     border: 1px solid #eee;
 }
+
+/* Secciones */
 .section {
     padding: 16px;
     border-radius: 16px;
@@ -45,8 +55,20 @@ div.stButton > button {
     border: 1px solid #ececec;
     box-shadow: 0 3px 16px rgba(0,0,0,.05);
 }
+
+/* Tipografías por defecto */
 h1, h2, h3 { font-weight: 800; }
 small.help { color: #666; }
+
+/* Ajustes finos de los encabezados del login:
+   - H2 (Instrucción) más grande
+   - H3 (Ingreso) un poco más pequeño
+*/
+.login-title h2 { font-size: 2.0rem; line-height: 1.2; margin: .75rem 0 .25rem 0; }
+.login-subtitle h3 { font-size: 1.6rem; line-height: 1.2; margin: .5rem 0 .75rem 0; }
+
+/* Un pequeño espacio extra antes del logo en principal */
+.header-spacer { height: 10px; }
 </style>
 ''', unsafe_allow_html=True)
 
@@ -77,8 +99,7 @@ def _find_logo_bytes() -> bytes | None:
 
 def render_logo_center(width_px: int = 220):
     """
-    Renderiza el logo SIEMPRE: si hay archivo lo incrusta como data URL Base64.
-    Esto evita problemas de rutas en Streamlit Cloud.
+    Renderiza el logo siempre visible (lo incrusta como data URL Base64).
     """
     img_bytes = _find_logo_bytes()
     if not img_bytes:
@@ -87,7 +108,7 @@ def render_logo_center(width_px: int = 220):
     b64 = base64.b64encode(img_bytes).decode("ascii")
     st.markdown(
         f"""
-        <div style="text-align:center; margin: 6px 0 4px 0;">
+        <div style="text-align:center; margin: 10px 0 8px 0;">
             <img src="data:image/png;base64,{b64}" width="{width_px}" />
         </div>
         """,
@@ -95,9 +116,6 @@ def render_logo_center(width_px: int = 220):
     )
 
 def render_logo_sidebar(width_px: int = 160):
-    """
-    Igual que arriba pero pensado para la barra lateral.
-    """
     img_bytes = _find_logo_bytes()
     if not img_bytes:
         return
@@ -115,9 +133,15 @@ def render_logo_sidebar(width_px: int = 160):
 def login_view():
     left, center, right = st.columns([1, 1, 1])
     with center:
+        # un pequeño spacer extra por si la barra superior es alta
+        st.markdown('<div class="header-spacer"></div>', unsafe_allow_html=True)
+
         render_logo_center(width_px=200)
-        st.markdown("### 🚇 Instrucción Operacional de Trabajos")
-        st.markdown("## 🔐 Ingreso al sistema")
+
+        # Hacemos "Instrucción..." más grande que "Ingreso..."
+        st.markdown('<div class="login-title">## 🚇 Instrucción Operacional de Trabajos</div>', unsafe_allow_html=True)
+        st.markdown('<div class="login-subtitle">### 🔐 Ingreso al sistema</div>', unsafe_allow_html=True)
+
         st.write("Por favor ingresa tus credenciales para continuar:")
 
         user = st.text_input("Usuario", key="login_user", placeholder="Escribe tu usuario")
@@ -276,7 +300,8 @@ if require_auth():
         dry_run = st.toggle("Simular (no crea tarjetas)", value=True,
                             help="Haz pruebas antes de subir definitivamente.")
 
-    # Logo centrado en la página principal
+    # Logo centrado en la página principal (con un pequeño spacer arriba)
+    st.markdown('<div class="header-spacer"></div>', unsafe_allow_html=True)
     render_logo_center(width_px=220)
 
     st.title("📤 SIOT → Pipefy")
