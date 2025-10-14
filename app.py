@@ -5,13 +5,14 @@ import re
 import time
 import json
 import base64
-import unicodedata
 from pathlib import Path
-from datetime import time as dtime, datetime, date
+from datetime import datetime, date, time as dtime
 
-import requests
 import pandas as pd
+import requests
 import streamlit as st
+from openpyxl import load_workbook
+from openpyxl.utils import column_index_from_string
 
 # ===============================
 # CONFIGURACIÓN DE PÁGINA / ESTILO
@@ -32,7 +33,7 @@ small.help { color: #666; }
 ''', unsafe_allow_html=True)
 
 # ===============================
-# LOGO (centrado y en sidebar)
+# LOGO
 # ===============================
 def _find_logo_bytes() -> bytes | None:
     for p in [
@@ -45,7 +46,8 @@ def _find_logo_bytes() -> bytes | None:
     ]:
         try:
             if p.exists(): return p.read_bytes()
-        except Exception: pass
+        except Exception:
+            pass
     return None
 
 def render_logo_center(width_px: int = 220):
@@ -63,7 +65,7 @@ def render_logo_sidebar(width_px: int = 160):
         <img src="data:image/png;base64,{b64}" width="{width_px}" /></div>""", unsafe_allow_html=True)
 
 # ===============================
-# AUTENTICACIÓN SIMPLE
+# AUTENTICACIÓN
 # ===============================
 AUTH_USERS = json.loads(os.environ.get("AUTH_USERS_JSON", os.getenv("AUTH_USERS_JSON", '{"admin":"admin"}')))
 
@@ -100,7 +102,7 @@ def logout_button():
             st.rerun()
 
 # ===============================
-# CONFIGURACIÓN PIPEFY / SECRETS
+# SECRETS / PIPEFY
 # ===============================
 PIPEFY_API_URL = "https://api.pipefy.com/graphql"
 
@@ -112,7 +114,7 @@ PIPEFY_TOKEN = get_secret("PIPEFY_TOKEN", "")
 PIPE_ID      = int(str(get_secret("PIPEFY_PIPE_ID", "0")) or "0")
 
 # ===============================
-# UTILIDADES PARA CAMPOS
+# UTILIDADES CAMPOS / FECHAS
 # ===============================
 def _fmt_date(val):
     """Fecha a YYYY-MM-DD si posible; si no, devuelve str original o None."""
@@ -150,7 +152,7 @@ def _add_field(fields, field_id, value):
     fields.append({"field_id": field_id, "field_value": s})
 
 def _parse_multi(val):
-    """Convierte una celda en lista (para checklists o multiselect)."""
+    """Convierte celda a lista (para checklists o multiselect)."""
     if val is None:
         return None
     try:
@@ -164,8 +166,7 @@ def _parse_multi(val):
     s = str(val).strip()
     if not s or s.lower() == "nan":
         return None
-    parts = [p.strip() for p in s.replace(",", ";").split(";") if p.strip()]
-    return parts or None
+    return [p.strip() for p in s.replace(",", ";").split(";") if p.strip()] or None
 
 def _add_field_list(fields, field_id, value):
     items = _parse_multi(value)
@@ -210,39 +211,56 @@ def _add_label_select(fields, field_id, value, labels_map, report_missing: list)
     if ids:
         fields.append({"field_id": field_id, "field_value": ids})
 
-def _is_blank_value(v):
-    try:
-        if v is None or (isinstance(v, float) and pd.isna(v)):
-            return True
-    except Exception:
-        if v is None:
-            return True
-    s = str(v).strip()
-    return s == "" or s.lower() == "nan"
-
 # ===============================
-# LECTURA EXCEL (ENCABEZADO EN FILA 8, SUBE DESDE FILA 8)
+# LECTURA DE LA TABLA 'SIOT'
 # ===============================
-HEADER_ROW_1BASED = 8  # <--- como pediste
-def read_excel_header_row(uploaded_bytes: bytes, header_row_1based: int = HEADER_ROW_1BASED) -> pd.DataFrame:
+def read_excel_table(uploaded_bytes: bytes, table_name: str = "SIOT") -> pd.DataFrame:
     """
-    Lee la PRIMERA hoja tomando la fila `header_row_1based` como encabezados.
-    Si header=7 (fila 8), los datos arrancan en la siguiente (fila 9).
+    Busca una tabla estructurada llamada `SIOT` en cualquier hoja y la convierte en DataFrame.
+    La primera fila del rango es el encabezado de la tabla.
     """
     bio = io.BytesIO(uploaded_bytes)
-    df = pd.read_excel(bio, engine="openpyxl", header=header_row_1based - 1)
-    # Limpiezas ligeras
-    df = df.loc[:, [c for c in df.columns if str(c).strip() != "" and not str(c).startswith("Unnamed")]]
-    for c in df.columns:
-        if df[c].dtype == object:
-            df[c] = df[c].apply(lambda x: x.strip() if isinstance(x, str) else x)
-    df = df.dropna(how="all")
-    # Asegurar columnas string
-    df.columns = [str(c).strip() for c in df.columns]
-    return df
+    wb = load_workbook(bio, data_only=True, read_only=True)
+
+    for ws in wb.worksheets:
+        tables = getattr(ws, "_tables", {}) or {}
+        for t in tables.values():
+            if t.name and t.name.strip().lower() == table_name.lower():
+                ref = t.ref  # ej. "B10:AH500"
+                start, end = ref.split(":")
+                start_col = ''.join(filter(str.isalpha, start))
+                start_row = int(''.join(filter(str.isdigit, start)))
+                end_col = ''.join(filter(str.isalpha, end))
+                end_row = int(''.join(filter(str.isdigit, end)))
+
+                min_col = column_index_from_string(start_col)
+                max_col = column_index_from_string(end_col)
+
+                data = []
+                for r in ws.iter_rows(min_row=start_row, max_row=end_row,
+                                      min_col=min_col, max_col=max_col, values_only=True):
+                    data.append(list(r))
+
+                if not data:
+                    return pd.DataFrame()
+
+                header = [str(h).strip() if h is not None else "" for h in data[0]]
+                body = data[1:]
+                df = pd.DataFrame(body, columns=header)
+
+                # Limpiezas ligeras
+                df = df.loc[:, [c for c in df.columns if str(c).strip() != "" and not str(c).startswith("Unnamed")]]
+                for c in df.columns:
+                    if df[c].dtype == object:
+                        df[c] = df[c].apply(lambda x: x.strip() if isinstance(x, str) else x)
+                df = df.dropna(how="all")
+                return df
+
+    # Si no encuentra tabla SIOT, avisar claramente
+    return pd.DataFrame()
 
 # ===============================
-# GRAPHQL Pipefy
+# CREAR TARJETA EN PIPEFY
 # ===============================
 def pipefy_create_card(token: str, pipe_id: int, fields_attrs: list, title: str):
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
@@ -290,34 +308,36 @@ if require_auth():
     render_logo_center(220)
 
     st.title("📤 SIOT → Pipefy")
-    st.caption("Encabezados en la **fila 8**. Se crean tarjetas **desde la fila 8** (primera fila de datos tras el encabezado).")
+    st.caption("Se lee **la tabla estructurada `SIOT`** del Excel. Se crean tarjetas hasta la última fila con **EMPRESA** no vacía.")
 
     up = st.file_uploader("Subir Excel (.xlsx)", type=["xlsx"], accept_multiple_files=False)
 
     if up is not None:
         content = up.read()
-        df = read_excel_header_row(content, HEADER_ROW_1BASED)
+        df = read_excel_table(content, "SIOT")
 
-        # Validar columna EMPRESA
-        if "EMPRESA" not in df.columns:
-            st.error("No se encontró la columna **EMPRESA** en la fila de encabezado (fila 8). Verifica el archivo.")
+        if df is None or df.empty:
+            st.error("No se encontró la **tabla `SIOT`** en el archivo o no tiene datos.")
             st.stop()
 
-        # Limitar hasta la última fila con EMPRESA no vacía
+        if "EMPRESA" not in df.columns:
+            st.error("La tabla `SIOT` no contiene la columna **EMPRESA**. Revisa los encabezados de la tabla.")
+            st.stop()
+
+        # Limitar hasta última fila con EMPRESA no vacía
         mask_emp = df["EMPRESA"].astype(str).str.strip().replace({"None": "", "nan": ""}) != ""
         if not mask_emp.any():
-            st.error("No hay filas con EMPRESA a partir de la fila 8.")
+            st.error("No hay filas con EMPRESA en la tabla `SIOT`.")
             st.stop()
         last_idx = df.index[mask_emp].max()
         df_data = df.loc[df.index.min(): last_idx].copy()
 
-        # Vista previa y KPIs
-        st.subheader("👀 Vista previa (desde fila 8)")
+        st.subheader("👀 Vista previa (tabla SIOT)")
         st.dataframe(df_data.head(50), use_container_width=True)
 
         c1, c2, c3 = st.columns(3)
         with c1: st.markdown(f"<div class='kpi'><b>Columnas</b><br>{len(df_data.columns)}</div>", unsafe_allow_html=True)
-        with c2: st.markdown(f"<div class='kpi'><b>Filas totales (desde fila 8)</b><br>{len(df)}</div>", unsafe_allow_html=True)
+        with c2: st.markdown(f"<div class='kpi'><b>Filas totales (en tabla)</b><br>{len(df)}</div>", unsafe_allow_html=True)
         with c3: st.markdown(f"<div class='kpi'><b>Filas a subir</b><br>{len(df_data)}</div>", unsafe_allow_html=True)
 
         st.markdown("---")
@@ -327,21 +347,17 @@ if require_auth():
             st.stop()
 
         pipe_id_int = int(pipe_id)
-
-        # Mapa de etiquetas del pipe para label_select
         labels_map = _fetch_labels_map(token, pipe_id_int)
 
         if st.button("🚀 Subir a Pipefy", type="primary", use_container_width=True):
             missing_labels = []
             creadas = 0
             errores = 0
-
             progress = st.progress(0.0, text="Iniciando…")
             total = len(df_data)
 
             for i, (_, row) in enumerate(df_data.iterrows(), start=1):
                 fields = []
-
                 # Texto / fecha / select
                 _add_field(fields, "empresa", row.get("EMPRESA"))
                 _add_field(fields, "ccu", row.get("CCU"))
@@ -398,8 +414,8 @@ if require_auth():
                         errores += 1
                         st.error(f"❌ Error en fila {i}: {info}")
 
-                time.sleep(0.12)
-                progress.progress(i/total, text=f"Procesadas {i}/{total} (desde fila 8)")
+                time.sleep(0.10)
+                progress.progress(i/total, text=f"Procesadas {i}/{total} (tabla SIOT)")
 
             if missing_labels:
                 st.warning("Estas etiquetas NO existen en el Pipe y se omitieron: " + ", ".join(sorted(set(missing_labels))))
