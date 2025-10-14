@@ -185,47 +185,65 @@ def logout_button():
             st.success("Sesión cerrada.")
             st.rerun()
 
-# ---------- HELPERS DE EXCEL / PIPEFY ----------
-def read_excel_table(uploaded_bytes: bytes, table_name: str = "SIOT") -> pd.DataFrame:
+# ---------- PIPEFY / EXCEL HELPERS ----------
+# Mapeo AUTOMÁTICO: etiqueta de columna (encabezado Excel) -> field_id de Pipefy
+LABEL_TO_FIELD_ID = {
+    "IOT": "siot",
+    "EMPRESA": "empresa",
+    "CCU": "ccu",
+    "INTEGRANTES DE CUADRILLA": "integrantes_de_cuadrilla",
+    "CONTACTO CCU": "c_dula_ccu",
+    "CANTÓN / ESTACIÓN": "cant_n_estaci_n",
+    "ZONA DE ESTACIÓN": "zona_de_trabajo",
+    "DESCRIPCIÓN DE ACTIVIDAD": "descripci_n_de_actividad",
+    "FECHA DE INICIO": "fecha_de_inicio",
+    "FECHA DE FIN": "fecha_de_fin",
+    "HORA DE INICIO": "hora_de_inicio",
+    "HORA DE FIN": "hora_de_fin",
+    "TIPO DE JORNADA": "tipo_de_jornada",
+    "TIPO DE MANTENIMIENTO / INSPECCIÓN": "tipo_de_mantenimiento",
+    "N° REGISTRO DE FALLA": "registro_de_incidente",
+    "CATEGORÍA DE RIESGO": "categor_a_de_riesgo",
+    "CATEGORÍA DE TRABAJOS": "categor_a_de_trabajos",
+    "DESENERGIZACIONES": "desenergizaci_n",
+    "VEHÍCULO": "veh_culo",
+    "ILUMINACIÓN PARCIAL": "iluminaci_n_parcia",
+    "SEÑALETICA PROPIA": "se_aletica_propia",
+    "R1": "r1_1",
+    "R2": "r2_1",
+    "P1": "p1",
+    "P3": "p3",
+    "E1": "e1",
+    "V3": "v3",
+    "P6": "copy_of_se_aletica_propia",
+    "P7": "copy_of_r1",
+    "P8": "copy_of_p3",
+    "BLOQUEO DE VÍA": "bloqueo_de_v_a_1",
+    "DESDE": "bloqueo_desde",
+    "HASTA": "hasta",
+    "Seleccionar etiqueta": "seleccionar_etiqueta",
+    "CORREO ELECTRÓNICO DEL SOLICITANTE": "correo_electr_nico_del_solicitante",
+}
+
+def read_excel_header_row(uploaded_bytes: bytes, header_row_index_1based: int = 8) -> pd.DataFrame:
     """
-    Busca una tabla 'SIOT'; si no existe, usa la primera hoja.
+    Lee SIEMPRE tomando la fila 'header_row_index_1based' como encabezados.
+    - header_row_index_1based=8 -> header=7 en pandas.
     """
     bio = io.BytesIO(uploaded_bytes)
-    wb = load_workbook(bio, data_only=True, read_only=True)
-
-    for ws in wb.worksheets:
-        tables = getattr(ws, "_tables", {}) or {}
-        for t in tables.values():
-            if t.name and t.name.lower() == table_name.lower():
-                ref = t.ref  # "A1:K300"
-                start, end = ref.split(":")
-                start_col = ''.join(filter(str.isalpha, start))
-                start_row = int(''.join(filter(str.isdigit, start)))
-                end_col = ''.join(filter(str.isalpha, end))
-                end_row = int(''.join(filter(str.isdigit, end)))
-                min_col = column_index_from_string(start_col)
-                max_col = column_index_from_string(end_col)
-                data = []
-                for r in ws.iter_rows(min_row=start_row, max_row=end_row,
-                                      min_col=min_col, max_col=max_col):
-                    data.append([cell.value for cell in r])
-                if not data:
-                    return pd.DataFrame()
-                header = [str(h).strip() if h is not None else "" for h in data[0]]
-                body = data[1:]
-                return pd.DataFrame(body, columns=header)
-
-    # Respaldo: primera hoja
-    bio.seek(0)
-    xls = pd.ExcelFile(bio, engine="openpyxl")
-    first = xls.sheet_names[0]
-    return pd.read_excel(bio, sheet_name=first, engine="openpyxl")
+    # Tomamos SIEMPRE la primera hoja (es lo más estable para este caso)
+    df = pd.read_excel(bio, engine="openpyxl", header=header_row_index_1based - 1)
+    return df
 
 def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
+    # eliminar columnas Unnamed
+    df = df.loc[:, [c for c in df.columns if not str(c).startswith("Unnamed")]]
+    # limpiar encabezados
     df.columns = [str(c).strip() for c in df.columns]
-    df = df.dropna(axis=1, how="all")
+    # eliminar filas completamente vacías
     df = df.dropna(how="all")
+    # normalizar strings
     for c in df.columns:
         if df[c].dtype == object:
             df[c] = df[c].apply(lambda x: x.strip() if isinstance(x, str) else x)
@@ -243,6 +261,9 @@ def build_fields_attributes(row: dict, mapping: dict) -> list:
             continue
         if isinstance(value, str) and value.strip() == "":
             continue
+        # Formateo simple para fechas (Pipefy acepta string ISO o dd/mm/yyyy según config)
+        if hasattr(value, "strftime"):
+            value = value.strftime("%Y-%m-%d")
         attrs.append({"field_id": field_id, "field_value": value})
     return attrs
 
@@ -274,12 +295,12 @@ def pipefy_create_card(pipe_id: int, fields_attrs: list, token: str):
         card_id = data["data"]["createCard"]["card"]["id"]
     return ok and (errors is None) and (card_id is not None), card_id, errors, resp.text
 
-# ---------- LECTURA DE SECRETS / VARS ----------
+# ---------- SECRETS / VARS ----------
 def get_secret(name, default=None):
     try:
-        return st.secrets[name]  # Streamlit Secrets
+        return st.secrets[name]
     except Exception:
-        return os.getenv(name, default)  # fallback a env var si no está en secrets
+        return os.getenv(name, default)
 
 PIPE_ID_ENV = get_secret("PIPEFY_PIPE_ID")
 TOKEN_ENV   = get_secret("PIPEFY_TOKEN")
@@ -288,11 +309,11 @@ AUTO_MODE   = bool(PIPE_ID_ENV and TOKEN_ENV)
 
 # ---------- APP ----------
 if require_auth():
-    # Branding sidebar + botón de cerrar sesión
+    # Branding sidebar + logout
     render_logo_sidebar(width_px=150)
     logout_button()
 
-    # Mostrar panel de configuración SOLO si NO hay secrets/vars
+    # Panel lateral sólo si no hay secrets
     if not AUTO_MODE:
         with st.sidebar:
             st.subheader("🔧 Configuración Pipefy")
@@ -309,62 +330,58 @@ if require_auth():
         token   = str(TOKEN_ENV)
         dry_run = DRY_RUN_ENV
 
-    # Logo centrado arriba
+    # Logo y títulos
     st.markdown('<div class="header-spacer"></div>', unsafe_allow_html=True)
     render_logo_center(width_px=220)
 
     st.title("📤 SIOT → Pipefy")
-    st.caption("Sube tu archivo Excel, detectamos la tabla **SIOT**, y creamos una tarjeta por cada fila con datos.")
+    st.caption("Sube tu archivo Excel. Tomamos la **fila 8** como encabezados y creamos tarjetas desde la **fila 9** hasta la última con **EMPRESA**.")
 
-    # ---------- CARGA DE ARCHIVO ----------
+    # Uploader
     up = st.file_uploader("Subir Excel (.xlsx)", type=["xlsx"], accept_multiple_files=False)
 
     if up is not None:
         content = up.read()
-        df = read_excel_table(content, "SIOT")
-        if df is None or df.empty:
-            st.error("No se encontró la tabla 'SIOT' ni datos en la primera hoja. Verifica tu archivo.")
-            st.stop()
-
+        # 1) Leer con encabezado en fila 8
+        df = read_excel_header_row(content, header_row_index_1based=8)
         df = clean_dataframe(df)
 
-        # ----------- SOLO DESDE FILA 9 -----------
-        df_data = df.iloc[8:].copy()  # fila 9 (1-indexado) => iloc[8:]
-        if df_data.empty:
-            st.error("No hay datos a partir de la fila 9.")
+        # 2) Quedarse sólo con filas desde la 9 y hasta última con EMPRESA
+        if "EMPRESA" not in df.columns:
+            st.error("No se encontró la columna 'EMPRESA' en el archivo. Verifica que el encabezado esté exactamente en la fila 8.")
             st.stop()
 
-        st.subheader("👀 Vista previa (desde fila 9)")
+        # El df ya inicia en fila 8 como encabezado; df.iloc[1:] empieza fila 9
+        df_from_9 = df.iloc[1:].copy()
+
+        # recortar hasta última con EMPRESA
+        mask_empresa = df_from_9["EMPRESA"].notna() & (df_from_9["EMPRESA"].astype(str).str.strip() != "")
+        if not mask_empresa.any():
+            st.error("No hay datos a partir de la fila 9 en la columna 'EMPRESA'.")
+            st.stop()
+        last_idx = df_from_9.index[mask_empresa].max()
+        df_data = df_from_9.loc[df_from_9.index.min(): last_idx].copy()
+
+        st.subheader("👀 Vista previa (desde fila 9 hasta última con EMPRESA)")
         st.dataframe(df_data.head(50), use_container_width=True)
 
-        # ---------- Mapeo columnas → field_id ----------
-        st.subheader("🧭 Mapeo de columnas → campos de Pipefy")
-        default_mapping_literal = json.dumps({str(c): "" for c in df.columns}, ensure_ascii=False, indent=2)
+        # 3) Mapeo automático: tomar sólo columnas presentes en el Excel
+        auto_mapping = {col: LABEL_TO_FIELD_ID[col] for col in df_data.columns if col in LABEL_TO_FIELD_ID}
 
-        mapping_json = st.text_area(
-            "Pega aquí el JSON de mapeo (formato: {'ColumnaExcel': 'field_id'})",
-            value=default_mapping_literal,
-            height=260
-        )
+        # Info de mapeo
+        st.markdown("**Columnas mapeadas automáticamente:** " + ", ".join(auto_mapping.keys()) if auto_mapping else "No se pudo mapear ninguna columna automáticamente.")
+        missing_cols = [c for c in df_data.columns if c not in auto_mapping and not str(c).startswith("Unnamed")]
+        if missing_cols:
+            st.caption("Columnas sin mapeo (no se enviarán a Pipefy): " + ", ".join(missing_cols))
 
-        try:
-            mapping = json.loads(mapping_json)
-            for c in df.columns:
-                mapping.setdefault(str(c), "")
-        except Exception as e:
-            st.error(f"JSON inválido en el mapeo: {e}")
-            st.stop()
-
-        st.markdown(f"**Filas detectadas con datos (desde fila 9):** {len(df_data)}")
-
-        # KPIs
+        # 4) KPIs
         c1, c2, c3 = st.columns(3)
         with c1:
-            st.markdown(f"<div class='kpi'><b>Columnas</b><br>{len(df_data.columns)}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='kpi'><b>Columnas mapeadas</b><br>{len(auto_mapping)}</div>", unsafe_allow_html=True)
         with c2:
-            st.markdown(f"<div class='kpi'><b>Filas totales</b><br>{len(df)}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='kpi'><b>Filas totales (desde fila 9)</b><br>{len(df_from_9)}</div>", unsafe_allow_html=True)
         with c3:
-            st.markdown(f"<div class='kpi'><b>Filas a subir (≥ fila 9)</b><br>{len(df_data)}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='kpi'><b>Filas a subir</b><br>{len(df_data)}</div>", unsafe_allow_html=True)
 
         st.markdown("---")
 
@@ -372,7 +389,7 @@ if require_auth():
             st.error("Faltan credenciales de Pipefy. Define `PIPEFY_PIPE_ID` y `PIPEFY_TOKEN` en *secrets* o complétalos en el panel lateral.")
             st.stop()
 
-        # Iniciar proceso AUTOMÁTICO (sin botón)
+        # 5) Iniciar proceso AUTOMÁTICO
         st.info(f"Iniciando proceso {'(simulación)' if dry_run else ''} con Pipe ID {pipe_id}…")
 
         try:
@@ -388,15 +405,16 @@ if require_auth():
 
         for i, (_, row) in enumerate(df_data.iterrows(), start=1):
             row_dict = row.to_dict()
-            fields = build_fields_attributes(row_dict, mapping)
+            fields = build_fields_attributes(row_dict, auto_mapping)
 
             if not fields:
                 skipped += 1
-                logs.append({"estado": "omitida", "razon": "Sin campos con datos", "fila_excel": i + 8})
+                # i + 8 -> índice real en Excel (por el encabezado en 8 y arranque en 9)
+                logs.append({"estado": "omitida", "razon": "Sin campos mapeados con datos", "fila_excel": i + 8})
                 progress.progress(i/total, text=f"Omitida fila Excel {i+8} (sin datos mapeados)")
                 continue
 
-            if dry_run:
+            if DRY_RUN_ENV if AUTO_MODE else dry_run:
                 ok_count += 1
                 logs.append({"estado": "simulada", "campos": fields, "fila_excel": i + 8})
             else:
@@ -410,9 +428,9 @@ if require_auth():
                     time.sleep(0.4)
 
             time.sleep(0.15)
-            progress.progress(i/total, text=f"Procesadas {i} / {total} (desde fila Excel 9)")
+            progress.progress(i/total, text=f"Procesadas {i}/{total} (desde fila Excel 9)")
 
-        st.success(f"Proceso terminado. Éxitos: {ok_count} • Fallos: {fail_count} • Omitidas/Simuladas: {skipped}")
+        st.success(f"Proceso terminado. Éxitos: {ok_count} • Fallos: {fail_count} • Omitidas: {skipped}")
         st.download_button(
             "📥 Descargar log (JSON)",
             data=json.dumps(logs, ensure_ascii=False, indent=2),
