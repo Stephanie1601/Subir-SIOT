@@ -5,6 +5,7 @@ import time
 import json
 import base64
 from pathlib import Path
+from datetime import time as dtime, datetime, date
 
 import requests
 import pandas as pd
@@ -18,81 +19,17 @@ st.set_page_config(page_title="Carga SIOT → Pipefy", page_icon="📤", layout=
 # ---------- THEME / CSS ----------
 st.markdown('''
 <style>
-/* Fuente general Arial para toda la app */
-html, body, [class*="css"] {
-    font-family: 'Arial', sans-serif !important;
-}
-
-/* Contenedor principal más abajo para que no tape el logo */
-.block-container {
-    max-width: 1200px;
-    padding-top: 4.2rem !important;
-    margin-top: 0 !important;
-}
-
-/* Botones */
-div.stButton > button {
-    border-radius: 12px;
-    padding: 0.6rem 1rem;
-    font-weight: 600;
-    font-family: 'Arial', sans-serif !important;
-}
-
-/* Sidebar */
-.stSidebar, .sidebar .sidebar-content {
-    background: linear-gradient(180deg, #fafafa, #f0f0f0);
-}
-
-/* Tarjetas KPI */
-.kpi {
-    padding: 12px 16px;
-    border-radius: 14px;
-    background: #ffffff;
-    box-shadow: 0 3px 12px rgba(0,0,0,.06);
-    border: 1px solid #eee;
-}
-
-/* Secciones */
-.section {
-    padding: 16px;
-    border-radius: 16px;
-    background: #ffffff;
-    border: 1px solid #ececec;
-    box-shadow: 0 3px 16px rgba(0,0,0,.05);
-}
-
-/* Encabezados globales (fallback) */
-h1, h2, h3 { 
-    font-family: 'Arial', sans-serif !important;
-    font-weight: 800;
-}
-
-/* ESTILOS ESPECÍFICOS DE LOGIN */
-.title-io {               /* 🚇 Instrucción Operacional de Trabajos */
-    font-size: 2.6rem;    /* MÁS GRANDE */
-    line-height: 1.2;
-    margin: 0.75rem 0 0.25rem 0;
-    color: #FF9016;       /* Naranja EOMMT */
-    font-weight: 800;
-}
-.subtitle-login {         /* 🔐 Ingreso al sistema */
-    font-size: 1.6rem;    /* MÁS PEQUEÑO */
-    line-height: 1.2;
-    margin: 0.5rem 0 0.75rem 0;
-    color: #444444;
-    font-weight: 800;
-}
-
-/* Espaciador superior fino */
+html, body, [class*="css"] { font-family: 'Arial', sans-serif !important; }
+.block-container { max-width: 1200px; padding-top: 4.2rem !important; margin-top: 0 !important; }
+div.stButton > button { border-radius: 12px; padding: 0.6rem 1rem; font-weight: 600; font-family: 'Arial', sans-serif !important; }
+.stSidebar, .sidebar .sidebar-content { background: linear-gradient(180deg, #fafafa, #f0f0f0); }
+.kpi { padding: 12px 16px; border-radius: 14px; background: #ffffff; box-shadow: 0 3px 12px rgba(0,0,0,.06); border: 1px solid #eee; }
+.section { padding: 16px; border-radius: 16px; background: #ffffff; border: 1px solid #ececec; box-shadow: 0 3px 16px rgba(0,0,0,.05); }
+h1, h2, h3 { font-family: 'Arial', sans-serif !important; font-weight: 800; }
+.title-io { font-size: 2.6rem; line-height: 1.2; margin: .75rem 0 .25rem 0; color: #FF9016; font-weight: 800; }
+.subtitle-login { font-size: 1.6rem; line-height: 1.2; margin: .5rem 0 .75rem 0; color: #444; font-weight: 800; }
 .header-spacer { height: 15px; }
-
-/* Badge modo automático */
-.badge {
-    display:inline-block; padding:4px 8px; border-radius:999px;
-    background:#eef6ff; color:#185adb; font-size:.85rem; font-weight:700;
-    border:1px solid #d6e8ff;
-}
-
+.badge { display:inline-block; padding:4px 8px; border-radius:999px; background:#eef6ff; color:#185adb; font-size:.85rem; font-weight:700; border:1px solid #d6e8ff; }
 small.help { color: #666; }
 </style>
 ''', unsafe_allow_html=True)
@@ -100,17 +37,16 @@ small.help { color: #666; }
 # ---------- SIMPLE AUTH ----------
 AUTH_USERS = json.loads(os.environ.get("AUTH_USERS_JSON", os.getenv("AUTH_USERS_JSON", '{"admin":"admin"}')))
 
-# ---------- LOGO HELPERS ----------
+# ---------- LOGO ----------
 def _find_logo_bytes() -> bytes | None:
-    candidates = [
+    for p in [
         Path("/mnt/data/06ccb9c2-ca99-49b6-a58e-9452a7e6a452.png"),
         Path("/mnt/data/Logo EOMMT.png"),
         Path(__file__).parent / "Logo EOMMT.png",
         Path("Logo EOMMT.png"),
         Path("logo_eommt.png"),
         Path("assets/Logo EOMMT.png"),
-    ]
-    for p in candidates:
+    ]:
         try:
             if p.exists():
                 return p.read_bytes()
@@ -119,49 +55,33 @@ def _find_logo_bytes() -> bytes | None:
     return None
 
 def render_logo_center(width_px: int = 220):
-    img_bytes = _find_logo_bytes()
-    if not img_bytes:
-        st.info("No se encontró el logo de EOMMT en el servidor.")
+    img = _find_logo_bytes()
+    if not img:
         return
-    b64 = base64.b64encode(img_bytes).decode("ascii")
-    st.markdown(
-        f"""
-        <div style="text-align:center; margin: 10px 0 8px 0;">
-            <img src="data:image/png;base64,{b64}" width="{width_px}" />
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    b64 = base64.b64encode(img).decode("ascii")
+    st.markdown(f"""<div style="text-align:center; margin: 10px 0 8px 0;">
+        <img src="data:image/png;base64,{b64}" width="{width_px}" /></div>""", unsafe_allow_html=True)
 
 def render_logo_sidebar(width_px: int = 160):
-    img_bytes = _find_logo_bytes()
-    if not img_bytes:
+    img = _find_logo_bytes()
+    if not img:
         return
-    b64 = base64.b64encode(img_bytes).decode("ascii")
-    st.sidebar.markdown(
-        f"""
-        <div style="text-align:center; margin: 6px 0 10px 0;">
-            <img src="data:image/png;base64,{b64}" width="{width_px}" />
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
+    b64 = base64.b64encode(img).decode("ascii")
+    st.sidebar.markdown(f"""<div style="text-align:center; margin: 6px 0 10px 0;">
+        <img src="data:image/png;base64,{b64}" width="{width_px}" /></div>""", unsafe_allow_html=True)
 
 # ---------- LOGIN ----------
 def login_view():
-    left, center, right = st.columns([1, 1, 1])
-    with center:
+    _, c, _ = st.columns([1,1,1])
+    with c:
         st.markdown('<div class="header-spacer"></div>', unsafe_allow_html=True)
-        render_logo_center(width_px=200)
+        render_logo_center(200)
         st.markdown('<h2 class="title-io">🚇 Instrucción Operacional de Trabajos</h2>', unsafe_allow_html=True)
         st.markdown('<h3 class="subtitle-login">🔐 Ingreso al sistema</h3>', unsafe_allow_html=True)
         st.write("Por favor ingresa tus credenciales para continuar:")
-
         user = st.text_input("Usuario", key="login_user", placeholder="Escribe tu usuario")
         pwd  = st.text_input("Contraseña", key="login_pwd", type="password", placeholder="Escribe tu contraseña")
-        ok = st.button("Ingresar", key="btn_login", use_container_width=True)
-
-        if ok:
+        if st.button("Ingresar", key="btn_login", use_container_width=True):
             if user in AUTH_USERS and AUTH_USERS.get(user) == pwd:
                 st.session_state['auth_user'] = user
                 st.success("✅ Acceso concedido.")
@@ -174,8 +94,7 @@ def require_auth():
     if 'auth_user' in st.session_state:
         return True
     ok = login_view()
-    if not ok:
-        st.stop()
+    if not ok: st.stop()
     return True
 
 def logout_button():
@@ -186,7 +105,7 @@ def logout_button():
             st.rerun()
 
 # ---------- PIPEFY / EXCEL HELPERS ----------
-# Mapeo AUTOMÁTICO: etiqueta de columna (encabezado Excel) -> field_id de Pipefy
+# Mapeo AUTOMÁTICO: encabezado Excel -> field_id de Pipefy (coincidencia EXACTA)
 LABEL_TO_FIELD_ID = {
     "IOT": "siot",
     "EMPRESA": "empresa",
@@ -226,28 +145,31 @@ LABEL_TO_FIELD_ID = {
 }
 
 def read_excel_header_row(uploaded_bytes: bytes, header_row_index_1based: int = 8) -> pd.DataFrame:
-    """
-    Lee SIEMPRE tomando la fila 'header_row_index_1based' como encabezados.
-    - header_row_index_1based=8 -> header=7 en pandas.
-    """
     bio = io.BytesIO(uploaded_bytes)
-    # Tomamos SIEMPRE la primera hoja (es lo más estable para este caso)
-    df = pd.read_excel(bio, engine="openpyxl", header=header_row_index_1based - 1)
-    return df
+    # Tomamos la PRIMERA hoja y especificamos que la fila 8 son los encabezados
+    return pd.read_excel(bio, engine="openpyxl", header=header_row_index_1based - 1)
 
 def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
-    # eliminar columnas Unnamed
+    # eliminar columnas "Unnamed"
     df = df.loc[:, [c for c in df.columns if not str(c).startswith("Unnamed")]]
     # limpiar encabezados
     df.columns = [str(c).strip() for c in df.columns]
     # eliminar filas completamente vacías
     df = df.dropna(how="all")
-    # normalizar strings
+    # trim strings
     for c in df.columns:
         if df[c].dtype == object:
             df[c] = df[c].apply(lambda x: x.strip() if isinstance(x, str) else x)
     return df
+
+def _fmt_value_for_pipefy(value):
+    # fechas -> 'YYYY-MM-DD'; horas -> 'HH:MM'
+    if isinstance(value, (datetime, date)):
+        return value.strftime("%Y-%m-%d")
+    if isinstance(value, dtime):
+        return value.strftime("%H:%M")
+    return value
 
 def build_fields_attributes(row: dict, mapping: dict) -> list:
     attrs = []
@@ -261,9 +183,7 @@ def build_fields_attributes(row: dict, mapping: dict) -> list:
             continue
         if isinstance(value, str) and value.strip() == "":
             continue
-        # Formateo simple para fechas (Pipefy acepta string ISO o dd/mm/yyyy según config)
-        if hasattr(value, "strftime"):
-            value = value.strftime("%Y-%m-%d")
+        value = _fmt_value_for_pipefy(value)
         attrs.append({"field_id": field_id, "field_value": value})
     return attrs
 
@@ -309,11 +229,9 @@ AUTO_MODE   = bool(PIPE_ID_ENV and TOKEN_ENV)
 
 # ---------- APP ----------
 if require_auth():
-    # Branding sidebar + logout
-    render_logo_sidebar(width_px=150)
+    render_logo_sidebar(150)
     logout_button()
 
-    # Panel lateral sólo si no hay secrets
     if not AUTO_MODE:
         with st.sidebar:
             st.subheader("🔧 Configuración Pipefy")
@@ -322,7 +240,7 @@ if require_auth():
             dry_run = st.toggle("Simular (no crea tarjetas)", value=True, help="Haz pruebas antes de subir definitivamente.")
     else:
         with st.sidebar:
-            st.markdown(f"<span class='badge'>Modo automático (secrets)</span>", unsafe_allow_html=True)
+            st.markdown("<span class='badge'>Modo automático (secrets)</span>", unsafe_allow_html=True)
             st.write(f"Pipe ID: **{PIPE_ID_ENV}**")
             st.write("Token: **••••••••**")
             st.write(f"Dry run: **{DRY_RUN_ENV}**")
@@ -330,58 +248,51 @@ if require_auth():
         token   = str(TOKEN_ENV)
         dry_run = DRY_RUN_ENV
 
-    # Logo y títulos
     st.markdown('<div class="header-spacer"></div>', unsafe_allow_html=True)
-    render_logo_center(width_px=220)
+    render_logo_center(220)
 
     st.title("📤 SIOT → Pipefy")
-    st.caption("Sube tu archivo Excel. Tomamos la **fila 8** como encabezados y creamos tarjetas desde la **fila 9** hasta la última con **EMPRESA**.")
+    st.caption("Se toma la **fila 8** como encabezados y se crean tarjetas desde la **fila 9** hasta la última con **EMPRESA**.")
 
-    # Uploader
     up = st.file_uploader("Subir Excel (.xlsx)", type=["xlsx"], accept_multiple_files=False)
 
     if up is not None:
         content = up.read()
-        # 1) Leer con encabezado en fila 8
+
+        # 1) Leer y limpiar según tu formato (encabezados en fila 8)
         df = read_excel_header_row(content, header_row_index_1based=8)
         df = clean_dataframe(df)
 
-        # 2) Quedarse sólo con filas desde la 9 y hasta última con EMPRESA
         if "EMPRESA" not in df.columns:
-            st.error("No se encontró la columna 'EMPRESA' en el archivo. Verifica que el encabezado esté exactamente en la fila 8.")
+            st.error("No se encontró la columna 'EMPRESA' en la fila 8. Verifica el formato.")
             st.stop()
 
-        # El df ya inicia en fila 8 como encabezado; df.iloc[1:] empieza fila 9
+        # 2) Desde fila 9
         df_from_9 = df.iloc[1:].copy()
 
-        # recortar hasta última con EMPRESA
-        mask_empresa = df_from_9["EMPRESA"].notna() & (df_from_9["EMPRESA"].astype(str).str.strip() != "")
-        if not mask_empresa.any():
-            st.error("No hay datos a partir de la fila 9 en la columna 'EMPRESA'.")
+        # 3) Limitar hasta la última fila con EMPRESA no vacía
+        mask_emp = df_from_9["EMPRESA"].astype(str).str.strip() != ""
+        if not mask_emp.any():
+            st.error("No hay datos a partir de la fila 9 en 'EMPRESA'.")
             st.stop()
-        last_idx = df_from_9.index[mask_empresa].max()
+        last_idx = df_from_9.index[mask_emp].max()
         df_data = df_from_9.loc[df_from_9.index.min(): last_idx].copy()
 
-        st.subheader("👀 Vista previa (desde fila 9 hasta última con EMPRESA)")
+        st.subheader("👀 Vista previa (desde fila 9)")
         st.dataframe(df_data.head(50), use_container_width=True)
 
-        # 3) Mapeo automático: tomar sólo columnas presentes en el Excel
+        # 4) Mapeo automático basado en tus encabezados presentes
         auto_mapping = {col: LABEL_TO_FIELD_ID[col] for col in df_data.columns if col in LABEL_TO_FIELD_ID}
 
-        # Info de mapeo
-        st.markdown("**Columnas mapeadas automáticamente:** " + ", ".join(auto_mapping.keys()) if auto_mapping else "No se pudo mapear ninguna columna automáticamente.")
-        missing_cols = [c for c in df_data.columns if c not in auto_mapping and not str(c).startswith("Unnamed")]
-        if missing_cols:
-            st.caption("Columnas sin mapeo (no se enviarán a Pipefy): " + ", ".join(missing_cols))
+        st.markdown("**Columnas mapeadas automáticamente:** " + (", ".join(auto_mapping.keys()) if auto_mapping else "ninguna"))
+        not_mapped = [c for c in df_data.columns if c not in auto_mapping and not str(c).startswith("Unnamed")]
+        if not_mapped:
+            st.caption("Columnas sin mapeo (no se enviarán): " + ", ".join(not_mapped))
 
-        # 4) KPIs
         c1, c2, c3 = st.columns(3)
-        with c1:
-            st.markdown(f"<div class='kpi'><b>Columnas mapeadas</b><br>{len(auto_mapping)}</div>", unsafe_allow_html=True)
-        with c2:
-            st.markdown(f"<div class='kpi'><b>Filas totales (desde fila 9)</b><br>{len(df_from_9)}</div>", unsafe_allow_html=True)
-        with c3:
-            st.markdown(f"<div class='kpi'><b>Filas a subir</b><br>{len(df_data)}</div>", unsafe_allow_html=True)
+        with c1: st.markdown(f"<div class='kpi'><b>Columnas mapeadas</b><br>{len(auto_mapping)}</div>", unsafe_allow_html=True)
+        with c2: st.markdown(f"<div class='kpi'><b>Filas totales (desde fila 9)</b><br>{len(df_from_9)}</div>", unsafe_allow_html=True)
+        with c3: st.markdown(f"<div class='kpi'><b>Filas a subir</b><br>{len(df_data)}</div>", unsafe_allow_html=True)
 
         st.markdown("---")
 
@@ -389,7 +300,6 @@ if require_auth():
             st.error("Faltan credenciales de Pipefy. Define `PIPEFY_PIPE_ID` y `PIPEFY_TOKEN` en *secrets* o complétalos en el panel lateral.")
             st.stop()
 
-        # 5) Iniciar proceso AUTOMÁTICO
         st.info(f"Iniciando proceso {'(simulación)' if dry_run else ''} con Pipe ID {pipe_id}…")
 
         try:
@@ -400,7 +310,7 @@ if require_auth():
 
         progress = st.progress(0.0, text="Iniciando…")
         logs = []
-        ok_count, fail_count, skipped = 0, 0, 0
+        ok_count = fail_count = skipped = 0
         total = len(df_data)
 
         for i, (_, row) in enumerate(df_data.iterrows(), start=1):
@@ -409,12 +319,11 @@ if require_auth():
 
             if not fields:
                 skipped += 1
-                # i + 8 -> índice real en Excel (por el encabezado en 8 y arranque en 9)
                 logs.append({"estado": "omitida", "razon": "Sin campos mapeados con datos", "fila_excel": i + 8})
                 progress.progress(i/total, text=f"Omitida fila Excel {i+8} (sin datos mapeados)")
                 continue
 
-            if DRY_RUN_ENV if AUTO_MODE else dry_run:
+            if dry_run:
                 ok_count += 1
                 logs.append({"estado": "simulada", "campos": fields, "fila_excel": i + 8})
             else:
