@@ -67,9 +67,7 @@ h1, h2, h3 {
     font-weight: 800;
 }
 
-/* ESTILOS ESPECÍFICOS DE LOGIN
-   Usamos etiquetas HTML reales <h2> y <h3> con estas clases
-   para que NO aparezcan "##" y podamos controlar tamaños. */
+/* ESTILOS ESPECÍFICOS DE LOGIN */
 .title-io {               /* 🚇 Instrucción Operacional de Trabajos */
     font-size: 2.6rem;    /* MÁS GRANDE */
     line-height: 1.2;
@@ -78,7 +76,7 @@ h1, h2, h3 {
     font-weight: 800;
 }
 .subtitle-login {         /* 🔐 Ingreso al sistema */
-    font-size: 1.6rem;    /* MÁS PEQUEÑO que el de arriba */
+    font-size: 1.6rem;    /* MÁS PEQUEÑO */
     line-height: 1.2;
     margin: 0.5rem 0 0.75rem 0;
     color: #444444;
@@ -87,6 +85,13 @@ h1, h2, h3 {
 
 /* Espaciador superior fino */
 .header-spacer { height: 15px; }
+
+/* Badge modo automático */
+.badge {
+    display:inline-block; padding:4px 8px; border-radius:999px;
+    background:#eef6ff; color:#185adb; font-size:.85rem; font-weight:700;
+    border:1px solid #d6e8ff;
+}
 
 small.help { color: #666; }
 </style>
@@ -97,12 +102,8 @@ AUTH_USERS = json.loads(os.environ.get("AUTH_USERS_JSON", os.getenv("AUTH_USERS_
 
 # ---------- LOGO HELPERS ----------
 def _find_logo_bytes() -> bytes | None:
-    """
-    Intenta cargar el logo desde rutas conocidas.
-    Devuelve bytes del PNG si lo encuentra; en caso contrario None.
-    """
     candidates = [
-        Path("/mnt/data/06ccb9c2-ca99-49b6-a58e-9452a7e6a452.png"),  # ruta confirmada
+        Path("/mnt/data/06ccb9c2-ca99-49b6-a58e-9452a7e6a452.png"),
         Path("/mnt/data/Logo EOMMT.png"),
         Path(__file__).parent / "Logo EOMMT.png",
         Path("Logo EOMMT.png"),
@@ -118,7 +119,6 @@ def _find_logo_bytes() -> bytes | None:
     return None
 
 def render_logo_center(width_px: int = 220):
-    """Renderiza el logo incrustado como data URL Base64 (evita problemas de ruta)."""
     img_bytes = _find_logo_bytes()
     if not img_bytes:
         st.info("No se encontró el logo de EOMMT en el servidor.")
@@ -151,16 +151,10 @@ def render_logo_sidebar(width_px: int = 160):
 def login_view():
     left, center, right = st.columns([1, 1, 1])
     with center:
-        # margen extra arriba
         st.markdown('<div class="header-spacer"></div>', unsafe_allow_html=True)
-
-        # Logo
         render_logo_center(width_px=200)
-
-        # TÍTULOS CON HTML + CLASES (ya NO hay "##")
         st.markdown('<h2 class="title-io">🚇 Instrucción Operacional de Trabajos</h2>', unsafe_allow_html=True)
         st.markdown('<h3 class="subtitle-login">🔐 Ingreso al sistema</h3>', unsafe_allow_html=True)
-
         st.write("Por favor ingresa tus credenciales para continuar:")
 
         user = st.text_input("Usuario", key="login_user", placeholder="Escribe tu usuario")
@@ -184,8 +178,18 @@ def require_auth():
         st.stop()
     return True
 
-# ---------- HELPERS ----------
+def logout_button():
+    with st.sidebar:
+        if st.button("🚪 Cerrar sesión", type="secondary", use_container_width=True):
+            st.session_state.pop('auth_user', None)
+            st.success("Sesión cerrada.")
+            st.rerun()
+
+# ---------- HELPERS DE EXCEL / PIPEFY ----------
 def read_excel_table(uploaded_bytes: bytes, table_name: str = "SIOT") -> pd.DataFrame:
+    """
+    Busca una tabla 'SIOT'; si no existe, usa la primera hoja.
+    """
     bio = io.BytesIO(uploaded_bytes)
     wb = load_workbook(bio, data_only=True, read_only=True)
 
@@ -193,34 +197,29 @@ def read_excel_table(uploaded_bytes: bytes, table_name: str = "SIOT") -> pd.Data
         tables = getattr(ws, "_tables", {}) or {}
         for t in tables.values():
             if t.name and t.name.lower() == table_name.lower():
-                ref = t.ref
+                ref = t.ref  # "A1:K300"
                 start, end = ref.split(":")
                 start_col = ''.join(filter(str.isalpha, start))
                 start_row = int(''.join(filter(str.isdigit, start)))
                 end_col = ''.join(filter(str.isalpha, end))
                 end_row = int(''.join(filter(str.isdigit, end)))
-
                 min_col = column_index_from_string(start_col)
                 max_col = column_index_from_string(end_col)
-
                 data = []
                 for r in ws.iter_rows(min_row=start_row, max_row=end_row,
                                       min_col=min_col, max_col=max_col):
                     data.append([cell.value for cell in r])
-
                 if not data:
                     return pd.DataFrame()
-
                 header = [str(h).strip() if h is not None else "" for h in data[0]]
                 body = data[1:]
-                df = pd.DataFrame(body, columns=header)
-                return df
+                return pd.DataFrame(body, columns=header)
 
+    # Respaldo: primera hoja
     bio.seek(0)
     xls = pd.ExcelFile(bio, engine="openpyxl")
     first = xls.sheet_names[0]
-    df = pd.read_excel(bio, sheet_name=first, engine="openpyxl")
-    return df
+    return pd.read_excel(bio, sheet_name=first, engine="openpyxl")
 
 def clean_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
@@ -249,10 +248,7 @@ def build_fields_attributes(row: dict, mapping: dict) -> list:
 
 def pipefy_create_card(pipe_id: int, fields_attrs: list, token: str):
     url = "https://api.pipefy.com/graphql"
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     mutation = """
     mutation($input: CreateCardInput!) {
       createCard(input: $input) {
@@ -272,23 +268,46 @@ def pipefy_create_card(pipe_id: int, fields_attrs: list, token: str):
         data = resp.json()
     except Exception:
         pass
-
     errors = data.get("errors")
     card_id = None
     if data.get("data") and data["data"].get("createCard"):
         card_id = data["data"]["createCard"]["card"]["id"]
     return ok and (errors is None) and (card_id is not None), card_id, errors, resp.text
 
+# ---------- LECTURA DE SECRETS / VARS ----------
+def get_secret(name, default=None):
+    try:
+        return st.secrets[name]  # Streamlit Secrets
+    except Exception:
+        return os.getenv(name, default)  # fallback a env var si no está en secrets
+
+PIPE_ID_ENV = get_secret("PIPEFY_PIPE_ID")
+TOKEN_ENV   = get_secret("PIPEFY_TOKEN")
+DRY_RUN_ENV = str(get_secret("PIPEFY_DRY_RUN", "false")).lower() == "true"
+AUTO_MODE   = bool(PIPE_ID_ENV and TOKEN_ENV)
+
 # ---------- APP ----------
 if require_auth():
-    # Logo en la barra lateral
+    # Branding sidebar + botón de cerrar sesión
     render_logo_sidebar(width_px=150)
+    logout_button()
 
-    with st.sidebar:
-        st.subheader("🔧 Configuración Pipefy")
-        pipe_id = st.text_input("Pipe ID", placeholder="Ej. 123456789")
-        token = st.text_input("API Token", type="password", placeholder="Token secreto de Pipefy")
-        dry_run = st.toggle("Simular (no crea tarjetas)", value=True, help="Haz pruebas antes de subir definitivamente.")
+    # Mostrar panel de configuración SOLO si NO hay secrets/vars
+    if not AUTO_MODE:
+        with st.sidebar:
+            st.subheader("🔧 Configuración Pipefy")
+            pipe_id = st.text_input("Pipe ID", placeholder="Ej. 123456789")
+            token = st.text_input("API Token", type="password", placeholder="Token secreto de Pipefy")
+            dry_run = st.toggle("Simular (no crea tarjetas)", value=True, help="Haz pruebas antes de subir definitivamente.")
+    else:
+        with st.sidebar:
+            st.markdown(f"<span class='badge'>Modo automático (secrets)</span>", unsafe_allow_html=True)
+            st.write(f"Pipe ID: **{PIPE_ID_ENV}**")
+            st.write("Token: **••••••••**")
+            st.write(f"Dry run: **{DRY_RUN_ENV}**")
+        pipe_id = str(PIPE_ID_ENV)
+        token   = str(TOKEN_ENV)
+        dry_run = DRY_RUN_ENV
 
     # Logo centrado arriba
     st.markdown('<div class="header-spacer"></div>', unsafe_allow_html=True)
@@ -299,6 +318,7 @@ if require_auth():
 
     # ---------- CARGA DE ARCHIVO ----------
     up = st.file_uploader("Subir Excel (.xlsx)", type=["xlsx"], accept_multiple_files=False)
+
     if up is not None:
         content = up.read()
         df = read_excel_table(content, "SIOT")
@@ -307,11 +327,20 @@ if require_auth():
             st.stop()
 
         df = clean_dataframe(df)
-        st.subheader("👀 Vista previa")
-        st.dataframe(df.head(50), use_container_width=True)
 
+        # ----------- SOLO DESDE FILA 9 -----------
+        df_data = df.iloc[8:].copy()  # fila 9 (1-indexado) => iloc[8:]
+        if df_data.empty:
+            st.error("No hay datos a partir de la fila 9.")
+            st.stop()
+
+        st.subheader("👀 Vista previa (desde fila 9)")
+        st.dataframe(df_data.head(50), use_container_width=True)
+
+        # ---------- Mapeo columnas → field_id ----------
         st.subheader("🧭 Mapeo de columnas → campos de Pipefy")
         default_mapping_literal = json.dumps({str(c): "" for c in df.columns}, ensure_ascii=False, indent=2)
+
         mapping_json = st.text_area(
             "Pega aquí el JSON de mapeo (formato: {'ColumnaExcel': 'field_id'})",
             value=default_mapping_literal,
@@ -326,74 +355,67 @@ if require_auth():
             st.error(f"JSON inválido en el mapeo: {e}")
             st.stop()
 
-        df_upload = df.dropna(how="all")
-        st.markdown(f"**Filas detectadas con datos:** {len(df_upload)}")
+        st.markdown(f"**Filas detectadas con datos (desde fila 9):** {len(df_data)}")
 
-        with st.expander("🔎 Filtro opcional"):
-            cols = st.multiselect(
-                "Columnas a mostrar en el resumen",
-                options=list(df_upload.columns),
-                default=list(df_upload.columns)[:6]
-            )
-            st.dataframe(df_upload[cols].head(100), use_container_width=True)
-
+        # KPIs
         c1, c2, c3 = st.columns(3)
         with c1:
-            st.markdown(f"<div class='kpi'><b>Columnas</b><br>{len(df_upload.columns)}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='kpi'><b>Columnas</b><br>{len(df_data.columns)}</div>", unsafe_allow_html=True)
         with c2:
             st.markdown(f"<div class='kpi'><b>Filas totales</b><br>{len(df)}</div>", unsafe_allow_html=True)
         with c3:
-            st.markdown(f"<div class='kpi'><b>Filas a subir</b><br>{len(df_upload)}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='kpi'><b>Filas a subir (≥ fila 9)</b><br>{len(df_data)}</div>", unsafe_allow_html=True)
 
         st.markdown("---")
-        btn = st.button("🚀 Subir a Pipefy", type="primary", use_container_width=True, disabled=(not pipe_id or not token))
-        if btn:
-            if not pipe_id or not token:
-                st.error("Completa el Pipe ID y el API Token.")
-                st.stop()
-            try:
-                pipe_id_int = int(pipe_id)
-            except:
-                st.error("Pipe ID debe ser numérico.")
-                st.stop()
 
-            progress = st.progress(0.0, text="Iniciando...")
-            logs = []
-            ok_count, fail_count, skipped = 0, 0, 0
-            total = len(df_upload)
+        if not pipe_id or not token:
+            st.error("Faltan credenciales de Pipefy. Define `PIPEFY_PIPE_ID` y `PIPEFY_TOKEN` en *secrets* o complétalos en el panel lateral.")
+            st.stop()
 
-            for i, (_, row) in enumerate(df_upload.iterrows(), start=1):
-                row_dict = row.to_dict()
-                fields = build_fields_attributes(row_dict, mapping)
+        # Iniciar proceso AUTOMÁTICO (sin botón)
+        st.info(f"Iniciando proceso {'(simulación)' if dry_run else ''} con Pipe ID {pipe_id}…")
 
-                if not fields:
-                    skipped += 1
-                    logs.append({"estado": "omitida", "razon": "Sin campos con datos", "fila": i})
-                    progress.progress(i/total, text=f"Omitida fila {i}")
-                    continue
+        try:
+            pipe_id_int = int(pipe_id)
+        except:
+            st.error("Pipe ID debe ser numérico.")
+            st.stop()
 
-                if dry_run:
+        progress = st.progress(0.0, text="Iniciando…")
+        logs = []
+        ok_count, fail_count, skipped = 0, 0, 0
+        total = len(df_data)
+
+        for i, (_, row) in enumerate(df_data.iterrows(), start=1):
+            row_dict = row.to_dict()
+            fields = build_fields_attributes(row_dict, mapping)
+
+            if not fields:
+                skipped += 1
+                logs.append({"estado": "omitida", "razon": "Sin campos con datos", "fila_excel": i + 8})
+                progress.progress(i/total, text=f"Omitida fila Excel {i+8} (sin datos mapeados)")
+                continue
+
+            if dry_run:
+                ok_count += 1
+                logs.append({"estado": "simulada", "campos": fields, "fila_excel": i + 8})
+            else:
+                ok, card_id, errors, raw = pipefy_create_card(pipe_id_int, fields, token)
+                if ok and card_id:
                     ok_count += 1
-                    logs.append({"estado": "simulada", "campos": fields, "fila": i})
+                    logs.append({"estado": "ok", "card_id": card_id, "fila_excel": i + 8})
                 else:
-                    ok, card_id, errors, raw = pipefy_create_card(pipe_id_int, fields, token)
-                    if ok and card_id:
-                        ok_count += 1
-                        logs.append({"estado": "ok", "card_id": card_id, "fila": i})
-                    else:
-                        fail_count += 1
-                        logs.append({"estado": "error", "fila": i, "detalle": errors or raw})
-                        time.sleep(0.4)
+                    fail_count += 1
+                    logs.append({"estado": "error", "fila_excel": i + 8, "detalle": errors or raw})
+                    time.sleep(0.4)
 
-                time.sleep(0.15)
-                progress.progress(i/total, text=f"Procesadas {i}/{total}")
+            time.sleep(0.15)
+            progress.progress(i/total, text=f"Procesadas {i} / {total} (desde fila Excel 9)")
 
-            st.success(f"Proceso terminado. Éxitos: {ok_count} • Fallos: {fail_count} • Omitidas: {skipped}")
-            st.download_button(
-                "📥 Descargar log (JSON)",
-                data=json.dumps(logs, ensure_ascii=False, indent=2),
-                file_name="resultado_pipefy.json",
-                mime="application/json"
-            )
-else:
-    st.stop()
+        st.success(f"Proceso terminado. Éxitos: {ok_count} • Fallos: {fail_count} • Omitidas/Simuladas: {skipped}")
+        st.download_button(
+            "📥 Descargar log (JSON)",
+            data=json.dumps(logs, ensure_ascii=False, indent=2),
+            file_name="resultado_pipefy.json",
+            mime="application/json"
+        )
