@@ -109,7 +109,14 @@ def normalize_label(s: str) -> str:
     s = re.sub(r"\s+", " ", s)
     return s.upper()
 
-# Sinónimos para encabezados largos → etiqueta corta esperada
+def safe_join(items) -> str:
+    """Une cualquier lista de labels de forma segura."""
+    try:
+        return ", ".join([str(x) for x in items if str(x).strip() != ""])
+    except Exception:
+        return ""
+
+# Sinónimos encabezados largos → etiqueta corta
 HEADER_SYNONYMS = {
     "CCU (COORDINADOR DE CUADRILLA) NOMBRE APELLIDO": "CCU",
     "CCU (COORDINADOR DE CUADRILLA)": "CCU",
@@ -156,14 +163,12 @@ LABEL_TO_FIELD_ID = {
     "CORREO ELECTRÓNICO DEL SOLICITANTE": "correo_electr_nico_del_solicitante",
 }
 # Normalizado → field_id (incluye sinónimos)
-NORM_TO_FIELD_ID = {}
-for k, v in LABEL_TO_FIELD_ID.items():
-    NORM_TO_FIELD_ID[normalize_label(k)] = v
+NORM_TO_FIELD_ID = {normalize_label(k): v for k, v in LABEL_TO_FIELD_ID.items()}
 for long_key, short_key in HEADER_SYNONYMS.items():
     NORM_TO_FIELD_ID[normalize_label(long_key)] = LABEL_TO_FIELD_ID[short_key]
 
 # ---------- LECTURA EXCEL CON DETECCIÓN DE ENCABEZADO ----------
-def read_excel_detect_header(uploaded_bytes: bytes, search_rows: int = 30) -> tuple[pd.DataFrame, int]:
+def read_excel_detect_header(uploaded_bytes: bytes, search_rows: int = 30):
     """
     Lee la PRIMERA hoja sin encabezado y detecta la fila de encabezados buscando 'EMPRESA'
     (normalizado) y al menos otro label conocido. Devuelve (df_con_encabezados, idx_fila_header_1based).
@@ -174,16 +179,14 @@ def read_excel_detect_header(uploaded_bytes: bytes, search_rows: int = 30) -> tu
     header_row = None
     for i in range(min(search_rows, len(raw))):
         row_vals = [normalize_label(x) for x in raw.iloc[i].tolist()]
-        if not any(row_vals): 
+        if not any(row_vals):
             continue
-        # ¿Contiene EMPRESA u otro label fuerte?
         hits = sum(1 for val in row_vals if val in NORM_TO_FIELD_ID or val in ("EMPRESA", "CCU"))
         if hits >= 1 and ("EMPRESA" in row_vals):
             header_row = i
             break
 
     if header_row is None:
-        # fallback: buscar la primera fila con más de 3 celdas no vacías
         for i in range(min(search_rows, len(raw))):
             row_vals = [str(x).strip() for x in raw.iloc[i].tolist() if pd.notna(x) and str(x).strip() != ""]
             if len(row_vals) >= 3:
@@ -191,14 +194,12 @@ def read_excel_detect_header(uploaded_bytes: bytes, search_rows: int = 30) -> tu
                 break
 
     if header_row is None:
-        # último fallback: asumir fila 8
-        header_row = 7
+        header_row = 7  # fallback
 
-    # Construir DF con esa fila como encabezado
     headers = raw.iloc[header_row].tolist()
     df = raw.iloc[header_row+1:].copy()
     df.columns = headers
-    return df, header_row + 1  # 1-based índice de encabezado
+    return df, header_row + 1  # 1-based
 
 # ---------- FORMATEO / PIPEFY ----------
 def _fmt_value_for_pipefy(value):
@@ -211,14 +212,14 @@ def _fmt_value_for_pipefy(value):
 def build_fields_attributes(row: dict, mapping: dict) -> list:
     attrs = []
     for col, field_id in mapping.items():
-        if not field_id: 
+        if not field_id:
             continue
         value = row.get(col)
-        if value is None: 
+        if value is None:
             continue
-        if isinstance(value, float) and pd.isna(value): 
+        if isinstance(value, float) and pd.isna(value):
             continue
-        if isinstance(value, str) and value.strip() == "": 
+        if isinstance(value, str) and value.strip() == "":
             continue
         value = _fmt_value_for_pipefy(value)
         attrs.append({"field_id": field_id, "field_value": value})
@@ -239,7 +240,6 @@ def pipefy_create_card(pipe_id: int, fields_attrs: list, token: str):
         resp = requests.post(url, headers=headers, json={"query": mutation, "variables": variables}, timeout=60)
     except Exception as e:
         return False, None, [{"message": str(e)}], str(e)
-
     ok = (resp.status_code == 200)
     data = {}
     try: data = resp.json()
@@ -289,7 +289,7 @@ if require_auth():
         # 1) Detectar encabezado y construir DF
         df_raw, header_row_1based = read_excel_detect_header(content, search_rows=30)
 
-        # Limpiar columnas 'Unnamed' y espacios
+        # Limpiar columnas vacías/Unnamed y strings
         df = df_raw.copy()
         df = df.loc[:, [c for c in df.columns if str(c).strip() != "" and not str(c).startswith("Unnamed")]]
         for c in df.columns:
@@ -304,7 +304,7 @@ if require_auth():
 
         # 2) Validar EMPRESA
         if "EMPRESA" not in norm_cols:
-            st.error("No se encontró la columna 'EMPRESA' en la fila de encabezado detectada.\n\nEncabezados detectados: " + ", ".join([str(c) for c in orig_cols]))
+            st.error("No se encontró la columna 'EMPRESA' en la fila de encabezado detectada.\n\nEncabezados detectados: " + safe_join(orig_cols))
             st.stop()
         emp_col = norm_to_orig["EMPRESA"]
 
@@ -319,16 +319,16 @@ if require_auth():
         st.subheader(f"👀 Vista previa (encabezado en fila {header_row_1based}; datos desde fila {header_row_1based+1})")
         st.dataframe(df_data.head(50), use_container_width=True)
 
-        # 4) Mapeo AUTOMÁTICO: usar sinónimos y normalización
+        # 4) Mapeo AUTOMÁTICO (con sinónimos y normalización)
         auto_mapping = {}
         for ncol, orig in zip(norm_cols, orig_cols):
             if ncol in NORM_TO_FIELD_ID:
                 auto_mapping[orig] = NORM_TO_FIELD_ID[ncol]
 
-        st.markdown("**Columnas mapeadas automáticamente:** " + (", ".join(auto_mapping.keys()) if auto_mapping else "ninguna"))
+        st.markdown("**Columnas mapeadas automáticamente:** " + (safe_join(auto_mapping.keys()) if auto_mapping else "ninguna"))
         missing = [c for c in orig_cols if c not in auto_mapping and not str(c).startswith("Unnamed")]
         if missing:
-            st.caption("Columnas sin mapeo (no se enviarán): " + ", ".join(missing))
+            st.caption("Columnas sin mapeo (no se enviarán): " + safe_join(missing))
 
         # 5) KPIs
         c1, c2, c3 = st.columns(3)
@@ -369,7 +369,7 @@ if require_auth():
                 ok_count += 1
                 logs.append({"estado": "simulada", "campos": fields, "fila_excel": header_row_1based + i})
             else:
-                ok, card_id, errors, raw = pipefy_create_card(pipe_id, fields, token)
+                ok, card_id, errors, raw = pipefy_create_card(int(pipe_id), fields, token)
                 if ok and card_id:
                     ok_count += 1
                     logs.append({"estado": "ok", "card_id": card_id, "fila_excel": header_row_1based + i})
