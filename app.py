@@ -15,14 +15,71 @@ from openpyxl.utils import column_index_from_string
 
 # =============== Config página / estilo ===============
 st.set_page_config(page_title="Carga SIOT", page_icon="📤", layout="wide")
-st.markdown('''
+
+# ---- Estilos (Arial + botón naranja + uploader beige) ----
+st.markdown("""
 <style>
 html, body, [class*="css"] { font-family: 'Arial', sans-serif !important; }
 .block-container { max-width: 1200px; padding-top: 3.25rem !important; margin-top: 0 !important; }
 h1, h2, h3 { font-weight: 800; }
 .kpi { padding: 12px 16px; border-radius: 14px; background: #fff; box-shadow: 0 3px 12px rgba(0,0,0,.06); border: 1px solid #eee; }
+
+/* ============ Botones ============ */
+div.stButton > button {
+  background: #FF7A00 !important;   /* naranja */
+  border: 1px solid #FF7A00 !important;
+  color: #ffffff !important;
+  font-weight: 700 !important;
+  border-radius: 12px !important;
+  padding: 0.6rem 1rem !important;
+  box-shadow: 0 4px 10px rgba(255,122,0,0.25) !important;
+}
+div.stButton > button:hover {
+  background: #E56D00 !important;
+  border-color: #E56D00 !important;
+}
+div.stButton > button:focus, div.stButton > button:active {
+  background: #CC6000 !important;
+  border-color: #CC6000 !important;
+  box-shadow: 0 0 0 3px rgba(255,122,0,0.25) !important;
+}
+
+/* Si usas kind="primary" (Streamlit recientes) fuerza naranja también */
+button[kind="primary"]{
+  background: #FF7A00 !important;
+  border: 1px solid #FF7A00 !important;
+  color: #fff !important;
+}
+button[kind="primary"]:hover{ background:#E56D00 !important; border-color:#E56D00 !important; }
+
+/* ============ File Uploader en beige ============ */
+[data-testid="stFileUploaderDropzone"],
+div[aria-label="Upload area"]{
+  background: #F6EFE6 !important;   /* beige */
+  border: 1.5px dashed #E3D5C3 !important;
+  border-radius: 14px !important;
+}
+/* Texto dentro del uploader (título y subtítulo) */
+[data-testid="stFileUploaderDropzone"] * {
+  color: #4A3F33 !important;         /* marrón suave para el texto */
+}
+/* Hover de la dropzone */
+[data-testid="stFileUploaderDropzone"]:hover{
+  background: #F2E8DB !important;
+  border-color: #D9C7B2 !important;
+}
+/* Icono de nube (si aparece como SVG) */
+[data-testid="stFileUploaderDropzone"] svg {
+  fill: #CC6000 !important;          /* tono naranja */
+}
+/* "pill" del archivo cargado */
+[data-testid="stFileUploader"] .uploadedFile {
+  background: #F6EFE6 !important;
+  border: 1px solid #E3D5C3 !important;
+  color: #4A3F33 !important;
+}
 </style>
-''', unsafe_allow_html=True)
+""", unsafe_allow_html=True)
 
 # =============== Logo ===============
 def _find_logo_bytes() -> bytes | None:
@@ -235,7 +292,7 @@ def pipefy_create_card(token: str, pipe_id: int, fields_attrs: list, title: str)
     except Exception as e:
         return False, str(e)
 
-# =============== Reglas de obligatoriedad (según tu error) ===============
+# =============== Reglas de obligatoriedad (según tu pipe) ===============
 REQUIRED_COLS = [
     "CCU",
     "INTEGRANTES DE CUADRILLA",
@@ -274,7 +331,7 @@ if require_auth():
             st.error("No se logró leer datos de la tabla **SIOT** ni por fallback de encabezados.")
             st.stop()
 
-        # Cortar hasta última fila con EMPRESA no vacía
+        # Cortar hasta última fila con EMPRESA no vacía (si existe la columna)
         if "EMPRESA" in df.columns:
             mask_emp = df["EMPRESA"].astype(str).str.strip().replace({"None": "", "nan": ""}) != ""
             if mask_emp.any():
@@ -376,4 +433,3 @@ if require_auth():
             if missing_labels:
                 st.warning("Estas etiquetas NO existen en el Pipe y se omitieron: " + ", ".join(sorted(set(missing_labels))))
             st.success(f"✅ Terminado. Tarjetas creadas: {creadas} • Errores: {errores}")
-
