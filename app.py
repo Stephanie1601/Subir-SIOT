@@ -460,9 +460,9 @@ if require_auth():
                 fields = []
                 # Texto/fecha/select
                 _add_field(fields, "empresa", row.get("EMPRESA"))
-                _add_field(fields, "ccu", row.get("CCU"))
+                _add_field(fields, "ccu_1", row.get("CCU"))
                 _add_field(fields, "integrantes_de_cuadrilla", row.get("INTEGRANTES DE CUADRILLA"))
-                _add_field(fields, "c_dula_ccu", row.get("CONTACTO CCU"))
+                _add_field(fields, "contacto_coordinador_de_cuadrilla", row.get("CONTACTO CCU"))
                 _add_field(fields, "fecha_de_inicio", _fmt_date(row.get("FECHA DE INICIO")))
                 _add_field(fields, "fecha_de_fin", _fmt_date(row.get("FECHA DE FIN")))
                 _add_field(fields, "cant_n_estaci_n", row.get("CANTÓN / ESTACIÓN"))
@@ -516,4 +516,5 @@ if require_auth():
             if missing_labels:
                 st.warning("Estas etiquetas NO existen en el Pipe y se omitieron: " + ", ".join(sorted(set(missing_labels))))
             st.success(f"✅ Terminado. Tarjetas creadas: {creadas} • Errores: {errores}")
+
 
