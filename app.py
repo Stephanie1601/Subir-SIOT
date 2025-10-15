@@ -111,24 +111,22 @@ def get_secret(name, default=None):
 
 PIPEFY_TOKEN = get_secret("PIPEFY_TOKEN", "")
 PIPE_ID      = int(str(get_secret("PIPEFY_PIPE_ID", "0")) or "0")
+AUTO_MODE    = bool(PIPEFY_TOKEN and PIPE_ID)
 
 # ===============================
-# LECTURA EXCEL: tabla SIOT primero, fallback por encabezado "EMPRESA"
+# LECTURA EXCEL: tabla SIOT primero, fallback "EMPRESA"
 # ===============================
+from openpyxl import load_workbook
+from openpyxl.utils import column_index_from_string
+
 def read_excel_table_siot(uploaded_bytes: bytes, table_name: str = "SIOT") -> pd.DataFrame:
-    """
-    1) Intenta extraer la tabla estructurada `SIOT` usando openpyxl (read_only=False).
-    2) Si no la encuentra, fallback: detecta la fila de encabezados donde esté 'EMPRESA'.
-    """
     bio = io.BytesIO(uploaded_bytes)
     wb = load_workbook(bio, data_only=True, read_only=False)
 
-    # Intentar leer tablas
     for ws in wb.worksheets:
         tables = ws.tables or {}
         for t in tables.values():
             if (t.name or "").strip().lower() == table_name.lower():
-                # Rango de la tabla
                 start, end = t.ref.split(":")
                 start_col = ''.join(filter(str.isalpha, start))
                 start_row = int(''.join(filter(str.isdigit, start)))
@@ -147,7 +145,6 @@ def read_excel_table_siot(uploaded_bytes: bytes, table_name: str = "SIOT") -> pd
                 header = [str(h).strip() if h is not None else "" for h in data[0]]
                 body = data[1:]
                 df = pd.DataFrame(body, columns=header)
-                # Limpieza
                 df = df.loc[:, [c for c in df.columns if str(c).strip() != "" and not str(c).startswith("Unnamed")]]
                 for c in df.columns:
                     if df[c].dtype == object:
@@ -155,7 +152,7 @@ def read_excel_table_siot(uploaded_bytes: bytes, table_name: str = "SIOT") -> pd
                 df = df.dropna(how="all")
                 return df
 
-    # Fallback: primera hoja, buscar fila de encabezados con "EMPRESA"
+    # Fallback: detectar encabezado con EMPRESA
     bio.seek(0)
     raw = pd.read_excel(bio, engine="openpyxl", sheet_name=0, header=None)
     header_row = None
@@ -178,10 +175,9 @@ def read_excel_table_siot(uploaded_bytes: bytes, table_name: str = "SIOT") -> pd
     return df
 
 # ===============================
-# === LÓGICA DE SUBIDA (TU SEGUNDO CÓDIGO) ===
+# LÓGICA DE SUBIDA (tu 2º código)
 # ===============================
 def _fmt_date(val):
-    """Devuelve fecha en formato YYYY-MM-DD si es posible; si no, None o str(val)."""
     if val is None:
         return None
     try:
@@ -202,7 +198,6 @@ def _fmt_date(val):
     return s
 
 def _add_field(fields, field_id, value):
-    """Agrega campo si el valor no está vacío."""
     if value is None:
         return
     try:
@@ -216,7 +211,6 @@ def _add_field(fields, field_id, value):
     fields.append({"field_id": field_id, "field_value": s})
 
 def _parse_multi(val):
-    """Convierte una celda en lista (para checklists o multiselect)."""
     if val is None:
         return None
     try:
@@ -239,18 +233,11 @@ def _add_field_list(fields, field_id, value):
         fields.append({"field_id": field_id, "field_value": items})
 
 def _fetch_labels_map(token: str, pipe_id: int) -> dict:
-    """Devuelve un dict {nombre: id} de las etiquetas del pipe."""
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-    q = {
-        "query": """
-        query($id: ID!){
-          pipe(id: $id){
-            labels { id name }
-          }
-        }
+    q = {"query": """
+        query($id: ID!){ pipe(id: $id){ labels { id name } } }
         """,
-        "variables": {"id": pipe_id}
-    }
+        "variables": {"id": pipe_id}}
     try:
         r = requests.post(PIPEFY_API_URL, headers=headers, json=q, timeout=30)
         data = r.json()
@@ -260,7 +247,6 @@ def _fetch_labels_map(token: str, pipe_id: int) -> dict:
         return {}
 
 def _add_label_select(fields, field_id, value, labels_map, report_missing):
-    """Agrega label_select usando IDs. `value` puede ser str con ';' o ',' o lista."""
     items = _parse_multi(value)
     if not items:
         return
@@ -276,7 +262,6 @@ def _add_label_select(fields, field_id, value, labels_map, report_missing):
     if ids:
         fields.append({"field_id": field_id, "field_value": ids})
 
-# ========== crear tarjeta ==========
 def pipefy_create_card(token: str, pipe_id: int, fields_attrs: list, title: str):
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
     mutation = {
@@ -313,20 +298,30 @@ if require_auth():
     render_logo_sidebar(150)
     logout_button()
 
-    with st.sidebar:
-        st.subheader("🔧 Configuración Pipefy")
-        token = st.text_input("API Token (st.secrets/ENV)", value=PIPEFY_TOKEN, type="password")
-        pipe_id = st.text_input("Pipe ID", value=str(PIPE_ID))
-        dry_run = st.toggle("Simular (no crea tarjetas)", value=True, help="Prueba sin crear tarjetas reales.")
-
     st.markdown('<div class="header-spacer"></div>', unsafe_allow_html=True)
     render_logo_center(220)
 
     st.title("📤 SIOT → Pipefy")
-    st.caption("Se lee la **tabla `SIOT`** (si existe). Si no, se detecta la fila de encabezados con **EMPRESA** y se crea desde allí. Se sube hasta la última fila con **EMPRESA** no vacía.")
+    if AUTO_MODE:
+        st.caption("Modo automático: se usará el token y el Pipe ID configurados en *secrets* y se subirá en cuanto selecciones el archivo.")
+    else:
+        st.caption("No se detectaron credenciales en *secrets*. Necesitas configurarlas.")
 
     up = st.file_uploader("Subir Excel (.xlsx)", type=["xlsx"], accept_multiple_files=False)
 
+    # Si NO hay secrets, mostrar panel de respaldo (solo si faltan)
+    if not AUTO_MODE:
+        with st.sidebar:
+            st.subheader("🔧 Configuración Pipefy (respaldo)")
+            token = st.text_input("API Token", value=PIPEFY_TOKEN, type="password")
+            pipe_id = st.text_input("Pipe ID", value=str(PIPE_ID or ""))
+            do_upload = st.button("Subir (manual)")
+    else:
+        token = PIPEFY_TOKEN
+        pipe_id = str(PIPE_ID)
+        do_upload = False  # no se usa en automático
+
+    # ======= Flujo principal =======
     if up is not None:
         content = up.read()
         df = read_excel_table_siot(content, "SIOT")
@@ -335,7 +330,6 @@ if require_auth():
             st.error("No se logró leer datos. Asegúrate de que la tabla se llame **SIOT** o que exista una fila de encabezados con **EMPRESA**.")
             st.stop()
 
-        # Validar y recortar hasta la última fila con EMPRESA
         if "EMPRESA" not in df.columns:
             st.error("No se encontró la columna **EMPRESA** en los encabezados detectados.")
             st.stop()
@@ -348,54 +342,24 @@ if require_auth():
         df_data = df.loc[df.index.min(): last_idx].copy()
 
         st.subheader("👀 Vista previa")
-        st.dataframe(df_data.head(50), use_container_width=True)
+        st.dataframe(df_data.head(30), use_container_width=True)
 
-        # Columnas “relevantes” para considerar si una fila está vacía (opcional)
-        columnas_relevantes = [
-            "EMPRESA","CCU","INTEGRANTES DE CUADRILLA","CONTACTO CCU",
-            "FECHA DE INICIO","FECHA DE FIN","CANTÓN / ESTACIÓN","ZONA DE ESTACIÓN",
-            "DESCRIPCIÓN DE ACTIVIDAD","HORA DE INICIO","HORA DE FIN",
-            "TIPO DE JORNADA","TIPO DE MANTENIMIENTO / INSPECCIÓN","N° REGISTRO DE FALLA",
-            "CATEGORÍA DE RIESGO","CATEGORÍA DE TRABAJOS","DESENERGIZACIONES",
-            "VEHÍCULO","ILUMINACIÓN PARCIAL","SEÑALETICA PROPIA","R1","R2","P1","P3","E1","V3","P6","P7","P8",
-            "BLOQUEO DE VÍA","DESDE","HASTA","Seleccionar etiqueta","CORREO ELECTRÓNICO DEL SOLICITANTE"
-        ]
-        def _row_is_empty(row, cols):
-            for col in cols:
-                if col in row and str(row[col]).strip().lower() not in ("", "nan", "none"):
-                    return False
-            return True
+        # Auto-subida si hay secrets
+        if AUTO_MODE:
+            if not token or not pipe_id.strip().isdigit():
+                st.error("Faltan credenciales en secrets. Configura `PIPEFY_TOKEN` y `PIPEFY_PIPE_ID`.")
+                st.stop()
 
-        mask_validas = ~df_data.apply(lambda r: _row_is_empty(r, columnas_relevantes), axis=1)
-        df_validas = df_data[mask_validas].copy()
-        df_vacias  = df_data[~mask_validas].copy()
+            pipe_id_int = int(pipe_id)
+            labels_map = _fetch_labels_map(token, pipe_id_int)
 
-        c1, c2, c3 = st.columns(3)
-        with c1: st.markdown(f"<div class='kpi'><b>Columnas</b><br>{len(df_validas.columns)}</div>", unsafe_allow_html=True)
-        with c2: st.markdown(f"<div class='kpi'><b>Filas con datos</b><br>{len(df_validas)}</div>", unsafe_allow_html=True)
-        with c3: st.markdown(f"<div class='kpi'><b>Filas vacías omitidas</b><br>{len(df_vacias)}</div>", unsafe_allow_html=True)
-
-        with st.expander("Ver filas omitidas (no se subirán)"):
-            st.dataframe(df_vacias, use_container_width=True)
-
-        if not token or not pipe_id.strip().isdigit():
-            st.error("Configura correctamente el **Token** y el **Pipe ID**.")
-            st.stop()
-
-        pipe_id_int = int(pipe_id)
-        labels_map  = _fetch_labels_map(token, pipe_id_int)
-
-        if st.button("🚀 Subir a Pipefy", type="primary", use_container_width=True):
-            missing_labels = []
-            creadas = 0
-            errores = 0
-
+            st.info("Iniciando subida automática…")
+            missing_labels, creadas, errores = [], 0, 0
             progress = st.progress(0.0, text="Iniciando…")
-            total = len(df_validas)
+            total = len(df_data)
 
-            for i, (_, row) in enumerate(df_validas.iterrows(), start=1):
+            for i, (_, row) in enumerate(df_data.iterrows(), start=1):
                 fields = []
-                # === campos texto/fecha/select ===
                 _add_field(fields, "empresa", row.get("EMPRESA"))
                 _add_field(fields, "ccu", row.get("CCU"))
                 _add_field(fields, "integrantes_de_cuadrilla", row.get("INTEGRANTES DE CUADRILLA"))
@@ -414,7 +378,6 @@ if require_auth():
                 _add_field(fields, "categor_a_de_trabajos", row.get("CATEGORÍA DE TRABAJOS"))
                 _add_field(fields, "desenergizaci_n", row.get("DESENERGIZACIONES"))
 
-                # === checklists / multiselect ===
                 _add_field_list(fields, "veh_culo", row.get("VEHÍCULO"))
                 _add_field_list(fields, "iluminaci_n_parcia", row.get("ILUMINACIÓN PARCIAL"))
                 _add_field_list(fields, "se_aletica_propia", row.get("SEÑALETICA PROPIA"))
@@ -428,32 +391,78 @@ if require_auth():
                 _add_field_list(fields, "copy_of_r1", row.get("P7"))
                 _add_field_list(fields, "copy_of_p3", row.get("P8"))
 
-                # === bloqueo de vía ===
                 _add_field_list(fields, "bloqueo_de_v_a_1", row.get("BLOQUEO DE VÍA"))
                 _add_field(fields, "bloqueo_desde", row.get("DESDE"))
                 _add_field(fields, "hasta", row.get("HASTA"))
 
-                # === etiquetas (label_select) ===
                 _add_label_select(fields, "seleccionar_etiqueta", row.get("Seleccionar etiqueta"), labels_map, missing_labels)
-
-                # === email solicitante ===
                 _add_field(fields, "correo_electr_nico_del_solicitante", row.get("CORREO ELECTRÓNICO DEL SOLICITANTE"))
 
                 title = str(row.get("EMPRESA") or f"Fila {i}")
-
-                if dry_run:
-                    creadas += 1
+                ok, info = pipefy_create_card(token, int(pipe_id), fields, title)
+                if ok: creadas += 1
                 else:
-                    ok, info = pipefy_create_card(token, pipe_id_int, fields, title)
-                    if ok:
-                        creadas += 1
-                    else:
-                        errores += 1
-                        st.error(f"❌ Error en fila {i}: {info}")
+                    errores += 1
+                    st.error(f"❌ Error en fila {i}: {info}")
 
                 time.sleep(0.10)
                 progress.progress(i/total, text=f"Procesadas {i}/{total}")
 
             if missing_labels:
                 st.warning("Estas etiquetas NO existen en el Pipe y se omitieron: " + ", ".join(sorted(set(missing_labels))))
-            st.success(f"Proceso terminado. Tarjetas {'simuladas' if dry_run else 'creadas'}: {creadas} • Errores: {errores}")
+            st.success(f"Proceso terminado. Tarjetas creadas: {creadas} • Errores: {errores}")
+
+    # Panel manual de respaldo (solo si NO hay secrets)
+    if (not AUTO_MODE) and token and pipe_id and do_upload and up is not None:
+        if not pipe_id.strip().isdigit():
+            st.error("Pipe ID inválido.")
+            st.stop()
+        df = read_excel_table_siot(up.getvalue(), "SIOT")
+        if df.empty or "EMPRESA" not in df.columns:
+            st.error("Archivo inválido para subir.")
+            st.stop()
+        mask_emp = df["EMPRESA"].astype(str).str.strip().replace({"None": "", "nan": ""}) != ""
+        df_data = df.loc[df.index.min(): df.index[mask_emp].max()].copy()
+        labels_map = _fetch_labels_map(token, int(pipe_id))
+        st.info("Subiendo (manual)…")
+        creadas = errores = 0
+        for i, (_, row) in enumerate(df_data.iterrows(), start=1):
+            fields=[]
+            _add_field(fields,"empresa",row.get("EMPRESA"))
+            _add_field(fields,"ccu",row.get("CCU"))
+            _add_field(fields,"integrantes_de_cuadrilla",row.get("INTEGRANTES DE CUADRILLA"))
+            _add_field(fields,"c_dula_ccu",row.get("CONTACTO CCU"))
+            _add_field(fields,"fecha_de_inicio",_fmt_date(row.get("FECHA DE INICIO")))
+            _add_field(fields,"fecha_de_fin",_fmt_date(row.get("FECHA DE FIN")))
+            _add_field(fields,"cant_n_estaci_n",row.get("CANTÓN / ESTACIÓN"))
+            _add_field(fields,"zona_de_trabajo",row.get("ZONA DE ESTACIÓN"))
+            _add_field(fields,"descripci_n_de_actividad",row.get("DESCRIPCIÓN DE ACTIVIDAD"))
+            _add_field(fields,"hora_de_inicio",row.get("HORA DE INICIO"))
+            _add_field(fields,"hora_de_fin",row.get("HORA DE FIN"))
+            _add_field(fields,"tipo_de_jornada",row.get("TIPO DE JORNADA"))
+            _add_field(fields,"tipo_de_mantenimiento",row.get("TIPO DE MANTENIMIENTO / INSPECCIÓN"))
+            _add_field(fields,"registro_de_incidente",row.get("N° REGISTRO DE FALLA"))
+            _add_field(fields,"categor_a_de_riesgo",row.get("CATEGORÍA DE RIESGO"))
+            _add_field(fields,"categor_a_de_trabajos",row.get("CATEGORÍA DE TRABAJOS"))
+            _add_field(fields,"desenergizaci_n",row.get("DESENERGIZACIONES"))
+            _add_field_list(fields,"veh_culo",row.get("VEHÍCULO"))
+            _add_field_list(fields,"iluminaci_n_parcia",row.get("ILUMINACIÓN PARCIAL"))
+            _add_field_list(fields,"se_aletica_propia",row.get("SEÑALETICA PROPIA"))
+            _add_field_list(fields,"r1_1",row.get("R1"))
+            _add_field_list(fields,"r2_1",row.get("R2"))
+            _add_field_list(fields,"p1",row.get("P1"))
+            _add_field_list(fields,"p3",row.get("P3"))
+            _add_field_list(fields,"e1",row.get("E1"))
+            _add_field_list(fields,"v3",row.get("V3"))
+            _add_field_list(fields,"copy_of_se_aletica_propia",row.get("P6"))
+            _add_field_list(fields,"copy_of_r1",row.get("P7"))
+            _add_field_list(fields,"copy_of_p3",row.get("P8"))
+            _add_field_list(fields,"bloqueo_de_v_a_1",row.get("BLOQUEO DE VÍA"))
+            _add_field(fields,"bloqueo_desde",row.get("DESDE"))
+            _add_field(fields,"hasta",row.get("HASTA"))
+            _add_label_select(fields,"seleccionar_etiqueta",row.get("Seleccionar etiqueta"),labels_map,[])
+            _add_field(fields,"correo_electr_nico_del_solicitante",row.get("CORREO ELECTRÓNICO DEL SOLICITANTE"))
+            ok, _ = pipefy_create_card(token, int(pipe_id), fields, str(row.get("EMPRESA") or f"Fila {i}"))
+            if ok: creadas += 1
+            else: errores += 1
+        st.success(f"Proceso terminado. Tarjetas creadas: {creadas} • Errores: {errores}")
