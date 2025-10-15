@@ -395,7 +395,7 @@ if require_auth():
     logout_button()
 
     render_logo_center(220)
-    st.title("📤 INSTRUCCIÓN OPERACIONAL DE TRABAJOS")
+    st.title("INSTRUCCIÓN OPERACIONAL DE TRABAJOS")
 
     if not PIPEFY_TOKEN or not PIPE_ID:
         st.error("Faltan credenciales en `st.secrets`: agrega `PIPEFY_TOKEN` y `PIPEFY_PIPE_ID`.")
@@ -516,3 +516,4 @@ if require_auth():
             if missing_labels:
                 st.warning("Estas etiquetas NO existen en el Pipe y se omitieron: " + ", ".join(sorted(set(missing_labels))))
             st.success(f"✅ Terminado. Tarjetas creadas: {creadas} • Errores: {errores}")
+
