@@ -1,9 +1,11 @@
 # app.py
 import os
 import io
+import re
 import json
 import time
 import base64
+import unicodedata
 from pathlib import Path
 from datetime import datetime
 
@@ -26,7 +28,7 @@ h1, h2, h3 { font-weight: 800; }
 
 /* ============ Botones ============ */
 div.stButton > button {
-  background: #FF7A00 !important;   /* naranja */
+  background: #FF7A00 !important;
   border: 1px solid #FF7A00 !important;
   color: #ffffff !important;
   font-weight: 700 !important;
@@ -34,49 +36,27 @@ div.stButton > button {
   padding: 0.6rem 1rem !important;
   box-shadow: 0 4px 10px rgba(255,122,0,0.25) !important;
 }
-div.stButton > button:hover {
-  background: #E56D00 !important;
-  border-color: #E56D00 !important;
-}
+div.stButton > button:hover { background: #E56D00 !important; border-color: #E56D00 !important; }
 div.stButton > button:focus, div.stButton > button:active {
-  background: #CC6000 !important;
-  border-color: #CC6000 !important;
+  background: #CC6000 !important; border-color: #CC6000 !important;
   box-shadow: 0 0 0 3px rgba(255,122,0,0.25) !important;
 }
-
-/* Si usas kind="primary" (Streamlit recientes) fuerza naranja también */
-button[kind="primary"]{
-  background: #FF7A00 !important;
-  border: 1px solid #FF7A00 !important;
-  color: #fff !important;
-}
+/* Forzar naranja si kind="primary" */
+button[kind="primary"]{ background:#FF7A00 !important; border:1px solid #FF7A00 !important; color:#fff !important; }
 button[kind="primary"]:hover{ background:#E56D00 !important; border-color:#E56D00 !important; }
 
 /* ============ File Uploader en beige ============ */
 [data-testid="stFileUploaderDropzone"],
 div[aria-label="Upload area"]{
-  background: #F6EFE6 !important;   /* beige */
+  background: #F6EFE6 !important;
   border: 1.5px dashed #E3D5C3 !important;
   border-radius: 14px !important;
 }
-/* Texto dentro del uploader (título y subtítulo) */
-[data-testid="stFileUploaderDropzone"] * {
-  color: #4A3F33 !important;         /* marrón suave para el texto */
-}
-/* Hover de la dropzone */
-[data-testid="stFileUploaderDropzone"]:hover{
-  background: #F2E8DB !important;
-  border-color: #D9C7B2 !important;
-}
-/* Icono de nube (si aparece como SVG) */
-[data-testid="stFileUploaderDropzone"] svg {
-  fill: #CC6000 !important;          /* tono naranja */
-}
-/* "pill" del archivo cargado */
+[data-testid="stFileUploaderDropzone"] * { color: #4A3F33 !important; }
+[data-testid="stFileUploaderDropzone"]:hover{ background:#F2E8DB !important; border-color:#D9C7B2 !important; }
+[data-testid="stFileUploaderDropzone"] svg { fill:#CC6000 !important; }
 [data-testid="stFileUploader"] .uploadedFile {
-  background: #F6EFE6 !important;
-  border: 1px solid #E3D5C3 !important;
-  color: #4A3F33 !important;
+  background:#F6EFE6 !important; border:1px solid #E3D5C3 !important; color:#4A3F33 !important;
 }
 </style>
 """, unsafe_allow_html=True)
@@ -156,9 +136,109 @@ def get_secret(name, default=None):
 PIPEFY_TOKEN = get_secret("PIPEFY_TOKEN", "")
 PIPE_ID      = int(str(get_secret("PIPEFY_PIPE_ID", "0")) or "0")
 
+# =============== Normalización de columnas ===============
+def _strip_accents(s: str) -> str:
+    return "".join(c for c in unicodedata.normalize("NFKD", s) if not unicodedata.combining(c))
+
+def _normalize_key(s: str) -> str:
+    """Normaliza encabezados: quita paréntesis, saltos de línea, asteriscos y tildes."""
+    if s is None:
+        return ""
+    s = str(s)
+    s = s.replace("\n", " ")                 # quita salto de línea
+    s = re.sub(r"\(.*?\)", "", s)            # quita '(...)'
+    s = s.replace("*", " ")                  # quita asteriscos
+    s = _strip_accents(s)                    # sin tildes
+    s = re.sub(r"[^A-Z0-9/ ]", " ", s.upper())  # deja letras/números/espacio y '/'
+    s = re.sub(r"\s+", " ", s).strip()       # colapsa espacios
+    return s
+
+# -------- Mapa de alias -> nombre canónico (los que usa el envío a Pipefy) --------
+ALIASES = {
+    "EMPRESA": ["EMPRESA"],
+
+    "CCU": [
+        "CCU",
+        "CCU COORDINADOR DE CUADRILLA NOMBRE APELLIDO",
+        "COORDINADOR DE CUADRILLA",
+        "NOMBRE COORDINADOR",
+        "CCU NOMBRE APELLIDO",
+    ],
+
+    "INTEGRANTES DE CUADRILLA": [
+        "INTEGRANTES DE CUADRILLA",
+        "INTEGRANTES DEL EQUIPO DE CUADRILLA",
+        "INTEGRANTES DEL EQUIPO DE CUADRILLA NOMBRE APELLIDO - NUMERO DE CEDULA",
+    ],
+
+    "CONTACTO CCU": [
+        "CONTACTO CCU",
+        "TELEFONO DE CONTACTO CCU",
+        "TELEFONO COORDINADOR",
+    ],
+
+    # ← canónico para email
+    "CORREO DEL SOLICITANTE": [
+        "CORREO DEL SOLICITANTE",
+        "CORREO ELECTRONICO DEL SOLICITANTE",
+        "EMAIL", "E MAIL", "CORREO ELECTRONICO",
+    ],
+
+    "FECHA DE INICIO": ["FECHA DE INICIO", "FECHA INICIO", "INICIO FECHA"],
+    "FECHA DE FIN":    ["FECHA DE FIN", "FECHA FIN", "FIN FECHA"],
+    "HORA DE INICIO":  ["HORA DE INICIO", "HORA INICIO", "INICIO HORA"],
+    "HORA DE FIN":     ["HORA DE FIN", "HORA FIN", "FIN HORA"],
+
+    "CANTÓN / ESTACIÓN": ["CANTON / ESTACION", "CANTON", "ESTACION", "CANTON / ESTACION"],
+
+    # plural → canónico singular
+    "ZONA DE ESTACIÓN": ["ZONA DE ESTACION", "ZONAS DE ESTACION", "ZONAS DE ESTACION "],
+
+    "CATEGORÍA DE TRABAJOS": ["CATEGORIA DE TRABAJOS"],
+    "TIPO DE MANTENIMIENTO / INSPECCIÓN": [
+        "TIPO DE MANTENIMIENTO / INSPECCION",
+        "TIPO DE MANTENIMIENTO", "TIPO DE INSPECCION",
+    ],
+
+    # con y sin "DE"
+    "N° REGISTRO DE FALLA": ["N° REGISTRO FALLA", "N REGISTRO FALLA", "NUMERO REGISTRO FALLA"],
+
+    "CATEGORÍA DE RIESGO": ["CATEGORIA DE RIESGO"],
+    "DESCRIPCIÓN DE ACTIVIDAD": ["DESCRIPCION DE ACTIVIDAD", "DESCRIPCION", "ACTIVIDAD"],
+    "DESENERGIZACIONES": ["DESENERGIZACIONES", "DESENERGIZACION"],
+
+    # con asterisco o “DE LA ZONA”
+    "VEHÍCULO": ["VEHICULO", "VEHICULOS", "VEHICULO "],
+    "ILUMINACIÓN PARCIAL": ["ILUMINACION PARCIAL", "ILUMINACION PARCIAL DE LA ZONA"],
+    "SEÑALETICA PROPIA": ["SENALETICA PROPIA", "SENHALETICA PROPIA", "SEÑALÉTICA PROPIA"],
+
+    "R1": ["R1"], "R2": ["R2"], "P1": ["P1"], "P3": ["P3"], "E1": ["E1"], "V3": ["V3"],
+    "P6": ["P6"], "P7": ["P7"], "P8": ["P8"],
+
+    "BLOQUEO DE VÍA": ["BLOQUEO DE VIA", "BLOQUEO DE VÍA"],
+    "DESDE": ["DESDE"],
+    "HASTA": ["HASTA"],
+
+    "Seleccionar etiqueta": ["SELECCIONAR ETIQUETA", "ETIQUETA"],
+}
+
+def apply_aliases(df: pd.DataFrame) -> pd.DataFrame:
+    if df.empty: return df
+    norm_cols = {_normalize_key(c): c for c in df.columns}
+    rename_map = {}
+    for canon, variants in ALIASES.items():
+        for v in (variants + [canon]):  # intentamos variantes + el canónico
+            vn = _normalize_key(v)
+            if vn in norm_cols:
+                rename_map[norm_cols[vn]] = canon
+                break
+    if rename_map:
+        df = df.rename(columns=rename_map)
+    return df
+
 # =============== Utilidades de Excel ===============
 def read_excel_table_siot(uploaded_bytes: bytes, table_name: str = "SIOT") -> pd.DataFrame:
-    """Lee la tabla estructurada SIOT; si no existe, fallback por encabezado 'EMPRESA'."""
+    """Lee la tabla SIOT; si no existe, fallback por encabezado flexible."""
     bio = io.BytesIO(uploaded_bytes)
     wb = load_workbook(bio, data_only=True, read_only=False)
 
@@ -188,13 +268,14 @@ def read_excel_table_siot(uploaded_bytes: bytes, table_name: str = "SIOT") -> pd
                         df[c] = df[c].apply(lambda x: x.strip() if isinstance(x, str) else x)
                 return df.dropna(how="all")
 
-    # 2) Fallback: detectar encabezado con EMPRESA
+    # 2) Fallback: detectar encabezado por EMPRESA (o similares)
     bio.seek(0)
     raw = pd.read_excel(bio, engine="openpyxl", sheet_name=0, header=None)
     header_row = None
-    for i in range(min(40, len(raw))):
+    for i in range(min(60, len(raw))):
         vals = [str(x).strip().upper() if pd.notna(x) else "" for x in raw.iloc[i].tolist()]
-        if "EMPRESA" in vals:
+        # si alguna celda parece EMPRESA (según alias)
+        if any(_normalize_key(v) in [_normalize_key(a) for a in ALIASES.get("EMPRESA", ["EMPRESA"])] for v in vals):
             header_row = i
             break
     if header_row is None: return pd.DataFrame()
@@ -211,8 +292,7 @@ def read_excel_table_siot(uploaded_bytes: bytes, table_name: str = "SIOT") -> pd
 def _fmt_date(val):
     if val is None: return None
     try:
-        if isinstance(val, float) and pd.isna(val):
-            return None
+        if isinstance(val, float) and pd.isna(val): return None
     except Exception: pass
     if hasattr(val, "strftime"):
         return val.strftime("%Y-%m-%d")
@@ -292,7 +372,7 @@ def pipefy_create_card(token: str, pipe_id: int, fields_attrs: list, title: str)
     except Exception as e:
         return False, str(e)
 
-# =============== Reglas de obligatoriedad (según tu pipe) ===============
+# =============== Reglas de obligatoriedad ===============
 REQUIRED_COLS = [
     "CCU",
     "INTEGRANTES DE CUADRILLA",
@@ -306,7 +386,7 @@ REQUIRED_COLS = [
     "VEHÍCULO",
     "ILUMINACIÓN PARCIAL",
     "SEÑALETICA PROPIA",
-    "CORREO ELECTRÓNICO DEL SOLICITANTE",
+    "CORREO DEL SOLICITANTE",
 ]
 
 # =============== APP ===============
@@ -330,6 +410,9 @@ if require_auth():
         if df.empty:
             st.error("No se logró leer datos de la tabla **SIOT** ni por fallback de encabezados.")
             st.stop()
+
+        # Renombrar columnas usando alias/normalización
+        df = apply_aliases(df)
 
         # Cortar hasta última fila con EMPRESA no vacía (si existe la columna)
         if "EMPRESA" in df.columns:
@@ -416,8 +499,8 @@ if require_auth():
                 # Etiquetas (label_select)
                 _add_label_select(fields, "seleccionar_etiqueta", row.get("Seleccionar etiqueta"), labels_map, missing_labels)
 
-                # Email solicitante
-                _add_field(fields, "correo_electr_nico_del_solicitante", row.get("CORREO ELECTRÓNICO DEL SOLICITANTE"))
+                # Email solicitante (canónico que definimos)
+                _add_field(fields, "correo_electr_nico_del_solicitante", row.get("CORREO DEL SOLICITANTE"))
 
                 title = str(row.get("EMPRESA") or f"Fila {i}")
                 ok, info = pipefy_create_card(PIPEFY_TOKEN, PIPE_ID, fields, title)
