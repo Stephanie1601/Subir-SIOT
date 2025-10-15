@@ -14,7 +14,7 @@ from openpyxl import load_workbook
 from openpyxl.utils import column_index_from_string
 
 # =============== Config página / estilo ===============
-st.set_page_config(page_title="Carga SIOT → Pipefy", page_icon="📤", layout="wide")
+st.set_page_config(page_title="Carga SIOT", page_icon="📤", layout="wide")
 st.markdown('''
 <style>
 html, body, [class*="css"] { font-family: 'Arial', sans-serif !important; }
@@ -66,7 +66,7 @@ def login_view():
     with c:
         render_logo_center(200)
         st.markdown("## 🚇 Instrucción Operacional de Trabajos")
-        st.markdown("### 🔐 Ingreso al sistema")
+        st.markdown("### Ingreso al sistema")
         user = st.text_input("Usuario", placeholder="Escribe tu usuario")
         pwd  = st.text_input("Contraseña", type="password", placeholder="Escribe tu contraseña")
         if st.button("Ingresar", use_container_width=True):
@@ -258,7 +258,7 @@ if require_auth():
     logout_button()
 
     render_logo_center(220)
-    st.title("📤 SIOT → Pipefy")
+    st.title("📤 INSTRUCCIÓN OPERACIONAL DE TRABAJOS")
 
     if not PIPEFY_TOKEN or not PIPE_ID:
         st.error("Faltan credenciales en `st.secrets`: agrega `PIPEFY_TOKEN` y `PIPEFY_PIPE_ID`.")
@@ -376,3 +376,4 @@ if require_auth():
             if missing_labels:
                 st.warning("Estas etiquetas NO existen en el Pipe y se omitieron: " + ", ".join(sorted(set(missing_labels))))
             st.success(f"✅ Terminado. Tarjetas creadas: {creadas} • Errores: {errores}")
+
